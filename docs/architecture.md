@@ -161,7 +161,7 @@ push to main
         ├─ ./semrel release                  (creates tag + GitHub Release)
         └─ if released: publish-image job
               ├─ docker build (multi-stage, alpine, root)
-              ├─ docker push  (ghcr.io/nrkno/github-action-sematic-release:<tag>)
+              ├─ docker push  (ghcr.io/nrkno/github-action-semantic-release:<tag>)
               └─ cosign sign  (keyless, OIDC from GitHub Actions)
 ```
 
@@ -204,7 +204,7 @@ resolved image reference:
 
 ```bash
 cosign verify "ghcr.io/${ACTION_IMAGE_REPO}:${ACTION_IMAGE_TAG}" \
-  --certificate-identity-regexp "https://github.com/nrkno/github-action-sematic-release/.github/workflows/.*" \
+  --certificate-identity-regexp "https://github.com/nrkno/github-action-semantic-release/.github/workflows/.*" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 ```
 
@@ -258,10 +258,10 @@ now happens automatically on every run (see above) — no manual step is require
 but consumers can additionally verify independently:
 
 ```bash
-cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \
-  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+cosign verify ghcr.io/nrkno/github-action-semantic-release:v1.2.3 \
+  --certificate-identity-regexp="https://github.com/nrkno/github-action-semantic-release/.*" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
 Each release prints its commit SHA in the workflow summary and on the
-[releases page](https://github.com/nrkno/github-action-sematic-release/releases).
+[releases page](https://github.com/nrkno/github-action-semantic-release/releases).

@@ -10,7 +10,7 @@ are released as patch versions following Semantic Versioning.
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
 Report vulnerabilities by sending a private security advisory via
-[GitHub Security Advisories](https://github.com/nrkno/github-action-sematic-release/security/advisories/new)
+[GitHub Security Advisories](https://github.com/nrkno/github-action-semantic-release/security/advisories/new)
 or by emailing **security@nrk.no**.
 
 Include as much detail as possible:
@@ -50,7 +50,7 @@ Container images are signed with [cosign keyless](https://docs.sigstore.dev/cosi
 on every release. Verify an image signature:
 
 ```bash
-cosign verify ghcr.io/nrkno/github-action-sematic-release:<tag> \
-  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+cosign verify ghcr.io/nrkno/github-action-semantic-release:<tag> \
+  --certificate-identity-regexp="https://github.com/nrkno/github-action-semantic-release/.*" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```

@@ -2,7 +2,7 @@
 
 [![Go version](https://img.shields.io/badge/go-1.25-00ADD8?logo=go)](https://go.dev/dl/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![CI](https://github.com/nrkno/github-action-sematic-release/actions/workflows/ci.yml/badge.svg)](https://github.com/nrkno/github-action-sematic-release/actions/workflows/ci.yml)
+[![CI](https://github.com/nrkno/github-action-semantic-release/actions/workflows/ci.yml/badge.svg)](https://github.com/nrkno/github-action-semantic-release/actions/workflows/ci.yml)
 
 **semrel** is NRK's in-house semantic-release CLI — a single Go binary that enforces
 [Conventional Commits](https://www.conventionalcommits.org/), computes the next semver,
@@ -24,13 +24,13 @@ immutable reference that cannot be silently changed.
 
 ```yaml
 # ✅ Secure — commit SHA is immutable
-- uses: nrkno/github-action-sematic-release@<COMMIT_SHA>
+- uses: nrkno/github-action-semantic-release@<COMMIT_SHA>
   with:
     subcommand: release
     token: ${{ secrets.GITHUB_TOKEN }}
 
 # ⚠️ Less secure — git tags can be force-pushed
-- uses: nrkno/github-action-sematic-release@v1.2.3
+- uses: nrkno/github-action-semantic-release@v1.2.3
   with:
     subcommand: release
     token: ${{ secrets.GITHUB_TOKEN }}
@@ -40,8 +40,8 @@ The action image is tagged by release version in `action.yml`. Supply-chain
 integrity is provided by cosign keyless signatures — verify with:
 
 ```bash
-cosign verify ghcr.io/nrkno/github-action-sematic-release:vX.Y.Z \
-  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release" \
+cosign verify ghcr.io/nrkno/github-action-semantic-release:vX.Y.Z \
+  --certificate-identity-regexp="https://github.com/nrkno/github-action-semantic-release" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
@@ -49,7 +49,7 @@ Always pin consuming workflows to a specific release tag or commit SHA
 rather than `@main`.
 
 Each release prints its commit SHA in the workflow summary. You can also find
-it on the [releases page](https://github.com/nrkno/github-action-sematic-release/releases).
+it on the [releases page](https://github.com/nrkno/github-action-semantic-release/releases).
 
 ---
 
@@ -246,7 +246,7 @@ jobs:
           persist-credentials: true
 
       - name: example-step
-        uses: nrkno/github-action-sematic-release@v2
+        uses: nrkno/github-action-semantic-release@v2
         with:
           subcommand: <value>
 
@@ -274,7 +274,7 @@ jobs:
           persist-credentials: true
 
       - name: example-step
-        uses: nrkno/github-action-sematic-release@v2
+        uses: nrkno/github-action-semantic-release@v2
         with:
           subcommand: <value>
           token: ${{ github.token }} # Optional

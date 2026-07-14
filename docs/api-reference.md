@@ -295,7 +295,7 @@ from `action.yml` without any local Go toolchain.
 
 ```yaml
 # Pin to a specific commit SHA (see Releases for the SHA of each release)
-- uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
+- uses: nrkno/github-action-semantic-release@COMMIT_SHA_HERE
   id: semrel
   with:
     subcommand: release
@@ -353,7 +353,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
+      - uses: nrkno/github-action-semantic-release@COMMIT_SHA_HERE
         with:
           subcommand: lint
 
@@ -370,7 +370,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
+      - uses: nrkno/github-action-semantic-release@COMMIT_SHA_HERE
         id: semrel
         with:
           subcommand: release
@@ -398,7 +398,7 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-      - uses: nrkno/github-action-sematic-release@COMMIT_SHA_HERE
+      - uses: nrkno/github-action-semantic-release@COMMIT_SHA_HERE
         with:
           subcommand: notify
           token: ${{ secrets.GITHUB_TOKEN }}
