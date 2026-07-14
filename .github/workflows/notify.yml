@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - name: Notify PRs
-        uses: nrkno/github-action-sematic-release@4e9e0cd1ef367ecb48ca492f8ad8874584d515ae
+        uses: nrkno/github-action-semantic-release@4e9e0cd1ef367ecb48ca492f8ad8874584d515ae
         with:
           subcommand: notify
           token: ${{ secrets.GITHUB_TOKEN }}
