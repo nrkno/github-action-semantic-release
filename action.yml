@@ -82,7 +82,7 @@ runs:
         ACTION_IMAGE_TAG: ${{ github.action_ref }}
       run: |
         cosign verify "ghcr.io/${ACTION_IMAGE_REPO}:${ACTION_IMAGE_TAG}" \
-          --certificate-identity-regexp "https://github.com/nrkno/github-action-sematic-release/.github/workflows/.*" \
+          --certificate-identity-regexp "https://github.com/nrkno/github-action-semantic-release/.github/workflows/.*" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
     - id: run
