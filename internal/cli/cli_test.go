@@ -750,8 +750,10 @@ func TestBumpTypeString(t *testing.T) {
 
 // ---------- New config-wiring tests ----------
 
-// TestCmdRelease_BranchGuard_NotInList verifies that a branch not in ReleaseBranches
-// causes the release to be skipped (released=false) without error.
+// TestCmdRelease_BranchGuard_NotInList verifies that with --dry-run, the branch
+// guard is skipped entirely so PR branches can preview the next version.
+// A feat commit triggers a minor bump (0.0.0 → 0.1.0), proving the branch
+// guard was skipped — not merely that BumpNone returned released=false.
 func TestCmdRelease_BranchGuard_NotInList(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
@@ -767,30 +769,40 @@ func TestCmdRelease_BranchGuard_NotInList(t *testing.T) {
 
 	// Output file so outputReleaseFields doesn't fail
 	outFile, err := os.CreateTemp("", "semrel-out-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer os.Remove(outFile.Name())
 	outFile.Close()
 	t.Setenv("GITHUB_OUTPUT", outFile.Name())
 
 	gitClient := &mockGitClient{
-		latestTag: nil,
-		commits:   []git.Commit{},
+		latestTag: nil, // bootstrap: no tags
+		commits: []git.Commit{
+			{SHA: "abc123def456", ShortSHA: "abc123d", Message: "feat: new feature"},
+		},
 	}
-	githubClient := &mockGitHubClient{}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
 
 	cmd := cmdRelease(gitClient, githubClient, logger)
 	cmd.SetArgs([]string{"--dry-run"})
 
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
-		t.Errorf("branch guard (not in list) should not error, got: %v", err)
+		t.Errorf("dry-run on non-release branch should not error, got: %v", err)
 	}
 
 	// Confirm no tag or release was created
 	if gitClient.createdTag != nil {
-		t.Error("no tag should have been created for skipped branch")
+		t.Error("no tag should have been created for dry-run")
 	}
+
+	// Output should contain a computed version (proving the branch guard was
+	// skipped and version computation happened) with released=false.
+	content, err := os.ReadFile(outFile.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), "version=0.1.0",
+		"branch guard must be skipped so version is computed (bootstrap 0.0.0 + minor)")
+	require.Contains(t, string(content), "released=false")
 }
 
 // TestCmdRelease_BranchGuard_Allowed verifies that a branch in ReleaseBranches proceeds normally.
@@ -1158,6 +1170,138 @@ func TestRelease_BumpNone_NoRelease(t *testing.T) {
 	require.Nil(t, gitClient.createdTag, "no tag should be created for BumpNone")
 
 	// GITHUB_OUTPUT should contain released=false
+	content, err := os.ReadFile(outFile.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), "released=false")
+}
+
+// TestDryRun_NonReleaseBranch_ComputesVersion verifies that --dry-run on a
+// non-release branch skips the branch guard and computes the projected next
+// version from conventional commits.
+func TestDryRun_NonReleaseBranch_ComputesVersion(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "feature/test-dry-run")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("release-branches: [main]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	require.NoError(t, err)
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: nil, // bootstrap: no tags
+		commits: []git.Commit{
+			{SHA: "aabb112233cc", ShortSHA: "aabb112", Message: "feat: new feature"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	err = cmd.ExecuteContext(context.Background())
+	require.NoError(t, err)
+	require.Nil(t, gitClient.createdTag, "no tag should be created in dry-run")
+	require.Nil(t, githubClient.createdRelease, "no release should be created in dry-run")
+
+	content, err := os.ReadFile(outFile.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), "version=0.1.0", "next minor version should be computed")
+	require.Contains(t, string(content), "released=false")
+}
+
+// TestDryRun_NonReleaseBranch_BumpNone_OutputsCurrentVersion verifies that
+// --dry-run with BumpNone on a non-release branch outputs the current version
+// with released=false.
+func TestDryRun_NonReleaseBranch_BumpNone_OutputsCurrentVersion(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "feature/no-bump")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("release-branches: [main]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	require.NoError(t, err)
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: git.NewTag("v1.2.3", "abc1234abc1234abc1234abc1234abc1234abc1234", "abc1234abc1234abc1234abc1234abc1234abc1234"),
+		commits:   []git.Commit{{SHA: "aabbccdd", ShortSHA: "aabbccd", Message: "chore: update deps"}},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	err = cmd.ExecuteContext(context.Background())
+	require.NoError(t, err)
+	require.Nil(t, gitClient.createdTag, "no tag should be created in dry-run")
+	require.Nil(t, githubClient.createdRelease, "no release should be created in dry-run")
+
+	content, err := os.ReadFile(outFile.Name())
+	require.NoError(t, err)
+	require.Contains(t, string(content), "version=1.2.3", "current version should be output for BumpNone")
+	require.Contains(t, string(content), "released=false")
+}
+
+// TestDryRun_NoWrites verifies that --dry-run performs zero write operations:
+// no tag creation, no tag push, no GitHub release creation.
+func TestDryRun_NoWrites(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "feature/preview")
+
+	tmpDir := t.TempDir()
+	rcPath := tmpDir + "/.semrelrc.yml"
+	if err := os.WriteFile(rcPath, []byte("release-branches: [main]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INPUT_WORKING_DIRECTORY", tmpDir)
+
+	outFile, err := os.CreateTemp("", "semrel-out-")
+	require.NoError(t, err)
+	defer os.Remove(outFile.Name())
+	outFile.Close()
+	t.Setenv("GITHUB_OUTPUT", outFile.Name())
+
+	gitClient := &mockGitClient{
+		latestTag: nil,
+		commits: []git.Commit{
+			{SHA: "aabb112233cc", ShortSHA: "aabb112", Message: "feat: new feature"},
+		},
+	}
+	githubClient := &mockGitHubClient{
+		releaseByTagErr: github.ErrNotFound,
+	}
+
+	cmd := cmdRelease(gitClient, githubClient, logger)
+	cmd.SetArgs([]string{"--dry-run"})
+
+	err = cmd.ExecuteContext(context.Background())
+	require.NoError(t, err)
+	require.Nil(t, gitClient.createdTag, "no tag should be created in dry-run")
+	require.Empty(t, gitClient.pushedTag, "no tag should be pushed in dry-run")
+	require.Nil(t, githubClient.createdRelease, "no release should be created in dry-run")
+
 	content, err := os.ReadFile(outFile.Name())
 	require.NoError(t, err)
 	require.Contains(t, string(content), "released=false")

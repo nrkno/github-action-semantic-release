@@ -1,11 +1,3 @@
----
-type: Index
-title: semrel documentation index
-description: Table of contents for the semrel docs/ directory — links to architecture, configuration, API reference, playbook, and log.
-tags: [index, documentation]
-timestamp: 2026-06-29
----
-
 # semrel documentation
 
 | Document | Description |
