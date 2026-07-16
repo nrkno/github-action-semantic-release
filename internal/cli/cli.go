@@ -236,21 +236,23 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			// Load environment
 			ghEnv := env.Load()
 
-			// Step 3: Branch guard
-			if len(cfg.ReleaseBranches) > 0 {
-				allowed := false
-				for _, pattern := range cfg.ReleaseBranches {
-					if ok, _ := path.Match(pattern, ghEnv.RefName); ok {
-						allowed = true
-						break
+			// Step 3: Branch guard (skipped in dry-run so PR branches can preview)
+			if !dryRun {
+				if len(cfg.ReleaseBranches) > 0 {
+					allowed := false
+					for _, pattern := range cfg.ReleaseBranches {
+						if ok, _ := path.Match(pattern, ghEnv.RefName); ok {
+							allowed = true
+							break
+						}
 					}
-				}
-				if !allowed {
-					logger.Info("skipping release: branch not in release-branches",
-						"branch", ghEnv.RefName,
-						"release-branches", cfg.ReleaseBranches,
-					)
-					return outputReleaseFields(ghEnv.Output, semver.Version{}, cfg.TagPrefix, false)
+					if !allowed {
+						logger.Info("skipping release: branch not in release-branches",
+							"branch", ghEnv.RefName,
+							"release-branches", cfg.ReleaseBranches,
+						)
+						return outputReleaseFields(ghEnv.Output, semver.Version{}, cfg.TagPrefix, false)
+					}
 				}
 			}
 
@@ -469,8 +471,12 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 						"url", release.HTMLURL,
 					)
 				}
-				logger.Info("created release for existing tag", "tag", versionTag)
-				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, true)
+				if !dryRun {
+					logger.Info("created release for existing tag", "tag", versionTag)
+				} else {
+					logger.Info("dry-run: tag already exists at HEAD, no release created", "tag", versionTag)
+				}
+				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, !dryRun)
 			}
 			// Rung 3 (full flow) falls through here
 
@@ -533,12 +539,16 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				)
 			}
 
-			logger.Info("release created", "tag", versionTag)
-			return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, true)
+			if !dryRun {
+				logger.Info("release created", "tag", versionTag)
+			} else {
+				logger.Info("dry-run: computed next version, no release created", "tag", versionTag)
+			}
+			return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, !dryRun)
 		},
 	}
 
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "don't push tag or create release")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview mode: skip branch guard, compute next version, write output fields, but perform no writes")
 
 	return cmd
 }

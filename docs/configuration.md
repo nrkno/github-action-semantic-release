@@ -3,7 +3,7 @@ type: Configuration
 title: semrel configuration reference
 description: All environment variables consumed by semrel, subcommand flags, and GITHUB_OUTPUT fields written on a successful release.
 tags: [configuration, environment-variables, flags, github-output]
-timestamp: 2026-06-30
+timestamp: 2026-07-16
 ---
 
 # Configuration
@@ -89,7 +89,7 @@ passed to `semrel notify`.
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--dry-run` | bool | `false` | Compute the next version and write output fields, but do not create the tag, push, or create the GitHub Release. Useful for testing version calculation. |
+| `--dry-run` | bool | `false` | Preview mode. Skips the branch guard (so it can run on PR branches), computes the projected next version from conventional commits, and writes all output fields — but performs zero write operations (no tag creation, no push, no GitHub Release). Use on pull requests to preview what version would be released when the branch merges. |
 
 ### `notify`
 

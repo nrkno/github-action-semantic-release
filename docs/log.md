@@ -3,10 +3,14 @@ type: Log
 title: semrel documentation log
 description: Dated change log for the semrel docs/ directory, recording every document creation and significant update.
 tags: [log, changelog, documentation]
-timestamp: 2026-06-30
+timestamp: 2026-07-16
 ---
 
 # Documentation log
+
+### 2026-07-16
+
+- **Update** `docs/configuration.md` — replaced `--dry-run` description with updated preview-mode semantics: skips branch guard for PR branches, computes projected next version, writes all output fields, performs zero write operations
 
 ### 2026-07-01
 
