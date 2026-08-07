@@ -163,7 +163,10 @@ func mockGitHubServer(t *testing.T) (*httptest.Server, *githubpkg.Client) {
 
 // TestE2ELintValidCommits tests lint with valid conventional commits
 func TestE2ELintValidCommits(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): t.Setenv is required to neutralize the CI runner's own
+	// pull_request context, which would otherwise change the lint range.
+	t.Setenv("GITHUB_EVENT_NAME", "")
+	t.Setenv("GITHUB_BASE_REF", "")
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -200,7 +203,9 @@ func TestE2ELintValidCommits(t *testing.T) {
 
 // TestE2ELintInvalidCommits tests lint with invalid commits
 func TestE2ELintInvalidCommits(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): see TestE2ELintValidCommits.
+	t.Setenv("GITHUB_EVENT_NAME", "")
+	t.Setenv("GITHUB_BASE_REF", "")
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -556,6 +561,60 @@ func (c *testGitClient) ListCommitsSinceTag(tag *gitpkg.Tag) ([]gitpkg.Commit, e
 			Author:   c.Author.Name,
 			Date:     c.Author.When,
 			Message:  c.Message,
+		})
+		return nil
+	})
+	return commits, err
+}
+
+// ListCommitsSinceRef returns commits reachable from HEAD but not from refName
+// (base..HEAD semantics), mirroring internal/git.Repository.
+func (c *testGitClient) ListCommitsSinceRef(refName string) ([]gitpkg.Commit, error) {
+	if c.rawRepo == nil {
+		return []gitpkg.Commit{}, nil
+	}
+
+	head, err := c.rawRepo.Head()
+	if err != nil {
+		return nil, err
+	}
+
+	baseHash, err := c.rawRepo.ResolveRevision(plumbing.Revision(refName))
+	if err != nil {
+		return nil, fmt.Errorf("could not resolve ref %q: %w", refName, err)
+	}
+
+	excluded := make(map[plumbing.Hash]struct{})
+	baseIter, err := c.rawRepo.Log(&git.LogOptions{From: *baseHash})
+	if err != nil {
+		return nil, err
+	}
+	err = baseIter.ForEach(func(bc *object.Commit) error {
+		excluded[bc.Hash] = struct{}{}
+		return nil
+	})
+	baseIter.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	iter, err := c.rawRepo.Log(&git.LogOptions{From: head.Hash()})
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var commits []gitpkg.Commit
+	err = iter.ForEach(func(hc *object.Commit) error {
+		if _, ok := excluded[hc.Hash]; ok {
+			return nil
+		}
+		commits = append(commits, gitpkg.Commit{
+			SHA:      hc.Hash.String(),
+			ShortSHA: hc.Hash.String()[:7],
+			Author:   hc.Author.Name,
+			Date:     hc.Author.When,
+			Message:  hc.Message,
 		})
 		return nil
 	})
