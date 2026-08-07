@@ -163,7 +163,10 @@ func mockGitHubServer(t *testing.T) (*httptest.Server, *githubpkg.Client) {
 
 // TestE2ELintValidCommits tests lint with valid conventional commits
 func TestE2ELintValidCommits(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): t.Setenv is required to neutralize the CI runner's own
+	// pull_request context, which would otherwise change the lint range.
+	t.Setenv("GITHUB_EVENT_NAME", "")
+	t.Setenv("GITHUB_BASE_REF", "")
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
@@ -200,7 +203,9 @@ func TestE2ELintValidCommits(t *testing.T) {
 
 // TestE2ELintInvalidCommits tests lint with invalid commits
 func TestE2ELintInvalidCommits(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): see TestE2ELintValidCommits.
+	t.Setenv("GITHUB_EVENT_NAME", "")
+	t.Setenv("GITHUB_BASE_REF", "")
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 

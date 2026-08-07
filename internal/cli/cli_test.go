@@ -147,6 +147,10 @@ func (m *mockGitHubClient) FindPRComment(ctx context.Context, owner, repo string
 
 func TestLintValidCommits(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Hermetic: neutralize CI runner context (tests themselves run inside a
+	// pull_request event on GitHub Actions, which would change the lint range).
+	t.Setenv("GITHUB_EVENT_NAME", "")
+	t.Setenv("GITHUB_BASE_REF", "")
 
 	gitClient := &mockGitClient{
 		commits: []git.Commit{
@@ -174,6 +178,9 @@ func TestLintValidCommits(t *testing.T) {
 
 func TestLintInvalidCommits(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Hermetic: neutralize CI runner context (see TestLintValidCommits).
+	t.Setenv("GITHUB_EVENT_NAME", "")
+	t.Setenv("GITHUB_BASE_REF", "")
 
 	gitClient := &mockGitClient{
 		commits: []git.Commit{
