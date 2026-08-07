@@ -97,6 +97,10 @@ func (c *lazyGitClient) ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error) 
 	return nil, c.err
 }
 
+func (c *lazyGitClient) ListCommitsSinceRef(refName string) ([]git.Commit, error) {
+	return nil, c.err
+}
+
 func (c *lazyGitClient) ListCommitsBetweenTags(from, to *git.Tag) ([]git.Commit, error) {
 	return nil, c.err
 }

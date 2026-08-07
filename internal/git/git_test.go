@@ -897,6 +897,145 @@ func createMergeCommit(t *testing.T, repo *gogit.Repository, message string, whe
 	return hash
 }
 
+// TestListCommitsSinceRef_ExcludesBaseCommits verifies base..HEAD semantics:
+// commits reachable from the base ref are excluded, commits unique to HEAD are returned.
+func TestListCommitsSinceRef_ExcludesBaseCommits(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	createCommitWithTime(t, repo, "file.txt", "content 1", "chore: commit 1", now)
+	c2 := createCommitWithTime(t, repo, "file.txt", "content 2", "Non conventional base commit", now.Add(1*time.Second))
+
+	// Base branch "main" points at C2
+	mainRef := plumbing.NewHashReference(plumbing.NewBranchReferenceName("main"), c2.Hash)
+	if err := repo.Storer.SetReference(mainRef); err != nil {
+		t.Fatalf("failed to create main ref: %v", err)
+	}
+
+	// Feature commits on HEAD (default branch) after the base
+	createCommitWithTime(t, repo, "file.txt", "content 3", "feat: commit 3", now.Add(2*time.Second))
+	createCommitWithTime(t, repo, "file.txt", "content 4", "fix: commit 4", now.Add(3*time.Second))
+
+	r := &Repository{raw: repo}
+	commits, err := r.ListCommitsSinceRef("main")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(commits) != 2 {
+		msgs := make([]string, len(commits))
+		for i, c := range commits {
+			msgs[i] = strings.TrimSpace(c.Message)
+		}
+		t.Fatalf("expected 2 commits (only PR commits), got %d: %v", len(commits), msgs)
+	}
+	if commits[0].Message != "fix: commit 4" {
+		t.Errorf("expected first commit 'fix: commit 4', got %q", commits[0].Message)
+	}
+	if commits[1].Message != "feat: commit 3" {
+		t.Errorf("expected second commit 'feat: commit 3', got %q", commits[1].Message)
+	}
+}
+
+// TestListCommitsSinceRef_MergeFromBaseExcluded is the regression test for the
+// GITHUB_BASE_REF lint-range bug. On pull_request events GitHub checks out
+// refs/pull/N/merge — a merge commit whose second parent chain contains base
+// branch commits. Those base commits (including non-conventional squash merges
+// already on main) must NOT be linted.
+//
+// Repo shape:
+//
+//	C0 ← C1(feat, HEAD chain) ← M(merge)
+//	  └── Cbase(non-conventional, main) ──┘
+func TestListCommitsSinceRef_MergeFromBaseExcluded(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	// C0: shared base
+	c0 := createCommitWithTime(t, repo, "base.txt", "base", "chore: initial commit", now)
+
+	// Cbase: commit on main with a NON-conventional message (e.g. bad squash merge)
+	cbaseHash := createCommitOffParent(t, repo, "Multiple interface support (#159)", now.Add(1*time.Second), c0.Hash)
+	mainRef := plumbing.NewHashReference(plumbing.NewBranchReferenceName("main"), cbaseHash)
+	if err := repo.Storer.SetReference(mainRef); err != nil {
+		t.Fatalf("failed to create main ref: %v", err)
+	}
+
+	// C1: PR commit on HEAD chain
+	c1 := createCommitWithTime(t, repo, "feature.txt", "feature", "feat: pr commit", now.Add(2*time.Second))
+
+	// M: the refs/pull/N/merge-style merge commit: parents [C1, Cbase]
+	createMergeCommit(t, repo, "Merge main into PR", now.Add(3*time.Second), c1.Hash, cbaseHash)
+
+	r := &Repository{raw: repo}
+	commits, err := r.ListCommitsSinceRef("main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Expected: M + C1. Cbase and C0 are reachable from main and must be excluded.
+	if len(commits) != 2 {
+		msgs := make([]string, len(commits))
+		for i, c := range commits {
+			msgs[i] = strings.TrimSpace(c.Message)
+		}
+		t.Fatalf("expected 2 commits (merge + PR commit), got %d: %v", len(commits), msgs)
+	}
+	for _, c := range commits {
+		if strings.Contains(c.Message, "Multiple interface support") {
+			t.Errorf("base branch commit leaked into lint range: %q", c.Message)
+		}
+	}
+}
+
+// TestListCommitsSinceRef_ResolvesRemoteRef verifies that a bare branch name
+// falls back to origin/<name> when no local branch exists — the normal state
+// in an actions/checkout PR workspace where only remote-tracking refs exist.
+func TestListCommitsSinceRef_ResolvesRemoteRef(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	c1 := createCommitWithTime(t, repo, "file.txt", "content 1", "chore: commit 1", now)
+
+	// Only a remote-tracking ref for the base branch
+	remoteRef := plumbing.NewHashReference(
+		plumbing.NewRemoteReferenceName("origin", "basebranch"), c1.Hash)
+	if err := repo.Storer.SetReference(remoteRef); err != nil {
+		t.Fatalf("failed to create remote ref: %v", err)
+	}
+
+	createCommitWithTime(t, repo, "file.txt", "content 2", "feat: commit 2", now.Add(1*time.Second))
+
+	r := &Repository{raw: repo}
+	commits, err := r.ListCommitsSinceRef("basebranch")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(commits) != 1 {
+		t.Fatalf("expected 1 commit, got %d", len(commits))
+	}
+	if commits[0].Message != "feat: commit 2" {
+		t.Errorf("expected 'feat: commit 2', got %q", commits[0].Message)
+	}
+}
+
+// TestListCommitsSinceRef_UnresolvableRef verifies a clear error for unknown refs.
+func TestListCommitsSinceRef_UnresolvableRef(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	createCommit(t, repo, "file.txt", "content", "chore: initial commit")
+
+	r := &Repository{raw: repo}
+	_, err := r.ListCommitsSinceRef("does-not-exist")
+
+	if err == nil {
+		t.Fatal("expected error for unresolvable ref, got nil")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error should mention the ref name, got: %v", err)
+	}
+}
+
 // TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch is the regression test for the
 // DFS traversal bug. With DFS (the old default), traversal dives into parent[0] (main chain)
 // and hits the stop-hash before backtracking to parent[1] (feature branch), silently dropping

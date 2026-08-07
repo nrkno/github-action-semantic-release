@@ -26,6 +26,7 @@ type GitClient interface {
 	FindTagByName(name string) (*git.Tag, error)
 	FindPreviousAnnotatedTag(current *git.Tag) (*git.Tag, error)
 	ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error)
+	ListCommitsSinceRef(refName string) ([]git.Commit, error)
 	ListCommitsBetweenTags(from, to *git.Tag) ([]git.Commit, error)
 	CreateAnnotatedTag(name, message string) (*git.Tag, error)
 	PushTag(ctx context.Context, tagName string, auth git.BasicAuth) error
@@ -139,16 +140,11 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 				// Bootstrap: all commits
 				commits, err = gitClient.ListCommitsSinceTag(nil)
 			} else {
-				// Range: from tag to HEAD
-				// For now, we'll use ListCommitsSinceTag and filter
-				// This is a simplification; a full implementation would support arbitrary ranges
-				var tag *git.Tag
-				tag, err = gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
-				if err != nil {
-					logger.Error("failed to find tag", "error", err)
-					return err
-				}
-				commits, err = gitClient.ListCommitsSinceTag(tag)
+				// fromRef..HEAD — on pull_request events fromRef is the base
+				// branch (lint only the PR's own commits; history already on
+				// the base branch is out of scope), on push/release it is the
+				// latest tag, and --from-ref overrides both.
+				commits, err = gitClient.ListCommitsSinceRef(fromRef)
 			}
 
 			if err != nil {

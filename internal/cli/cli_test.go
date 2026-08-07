@@ -26,21 +26,24 @@ func newTestTag(name, sha string) *git.Tag {
 }
 
 type mockGitClient struct {
-	latestTag         *git.Tag
-	latestTagErr      error
-	findTagByNameTag  *git.Tag
-	findTagByNameErr  error
-	commits           []git.Commit
-	commitsErr        error
-	createdTag        *git.Tag
-	createTagErr      error
-	pushedTag         string
-	pushTagErr        error
-	isShallowRepo     bool
-	previousTag       *git.Tag
-	previousTagErr    error
-	commitsBetween    []git.Commit
-	commitsBetweenErr error
+	latestTag          *git.Tag
+	latestTagErr       error
+	findTagByNameTag   *git.Tag
+	findTagByNameErr   error
+	commits            []git.Commit
+	commitsErr         error
+	commitsSinceRef    []git.Commit
+	commitsSinceRefErr error
+	sinceRefArg        string
+	createdTag         *git.Tag
+	createTagErr       error
+	pushedTag          string
+	pushTagErr         error
+	isShallowRepo      bool
+	previousTag        *git.Tag
+	previousTagErr     error
+	commitsBetween     []git.Commit
+	commitsBetweenErr  error
 }
 
 func (m *mockGitClient) FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error) {
@@ -56,6 +59,11 @@ func (m *mockGitClient) FindTagByName(name string) (*git.Tag, error) {
 
 func (m *mockGitClient) ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error) {
 	return m.commits, m.commitsErr
+}
+
+func (m *mockGitClient) ListCommitsSinceRef(refName string) ([]git.Commit, error) {
+	m.sinceRefArg = refName
+	return m.commitsSinceRef, m.commitsSinceRefErr
 }
 
 func (m *mockGitClient) CreateAnnotatedTag(name, message string) (*git.Tag, error) {
@@ -183,6 +191,73 @@ func TestLintInvalidCommits(t *testing.T) {
 	err := cmd.ExecuteContext(context.Background())
 	if err == nil {
 		t.Error("lint with invalid commits should error")
+	}
+}
+
+// TestLintPullRequestUsesBaseRef is the regression test for the lint-range bug:
+// on pull_request events lint must validate baseRef..HEAD, not latestTag..HEAD.
+// The mock's tag-range commits contain a non-conventional commit (simulating a
+// bad squash merge already on main); the baseRef range contains only the PR's
+// own conventional commits. Lint must pass and must query the base ref.
+func TestLintPullRequestUsesBaseRef(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
+	t.Setenv("GITHUB_BASE_REF", "main")
+
+	gitClient := &mockGitClient{
+		// latestTag..HEAD range — contains history that must NOT be linted
+		commits: []git.Commit{
+			{
+				SHA:      "badbadbadbad",
+				ShortSHA: "badbadb",
+				Message:  "Multiple interface support (#159)",
+			},
+		},
+		// baseRef..HEAD range — the PR's own commits
+		commitsSinceRef: []git.Commit{
+			{
+				SHA:      "abc123def456",
+				ShortSHA: "abc123d",
+				Message:  "feat: add new feature",
+			},
+		},
+	}
+
+	cmd := cmdLint(gitClient, logger)
+	cmd.SetArgs([]string{})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Errorf("lint on pull_request should only validate baseRef..HEAD, got error: %v", err)
+	}
+	if gitClient.sinceRefArg != "main" {
+		t.Errorf("expected ListCommitsSinceRef called with 'main', got %q", gitClient.sinceRefArg)
+	}
+}
+
+// TestLintPullRequestBaseRefViolations verifies violations in the PR's own
+// commits still fail the lint when using the baseRef range.
+func TestLintPullRequestBaseRefViolations(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
+	t.Setenv("GITHUB_BASE_REF", "main")
+
+	gitClient := &mockGitClient{
+		commitsSinceRef: []git.Commit{
+			{
+				SHA:      "abc123def456",
+				ShortSHA: "abc123d",
+				Message:  "not a conventional commit",
+			},
+		},
+	}
+
+	cmd := cmdLint(gitClient, logger)
+	cmd.SetArgs([]string{})
+
+	err := cmd.ExecuteContext(context.Background())
+	if err == nil {
+		t.Error("lint should fail when PR commits have violations")
 	}
 }
 

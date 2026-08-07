@@ -310,6 +310,99 @@ func (r *Repository) ListCommitsSinceTag(tag *Tag) ([]Commit, error) {
 	return commits, nil
 }
 
+// resolveRefToCommit resolves a ref name (branch, remote branch, tag, or SHA)
+// to a commit hash. Bare branch names fall back to origin/<name>, which is the
+// normal state in an actions/checkout PR workspace where the base branch only
+// exists as a remote-tracking ref. Annotated tags are peeled to their target commit.
+func (r *Repository) resolveRefToCommit(refName string) (plumbing.Hash, error) {
+	candidates := []string{
+		refName,
+		"refs/remotes/origin/" + refName,
+		"refs/heads/" + refName,
+	}
+	for _, candidate := range candidates {
+		hash, err := r.raw.ResolveRevision(plumbing.Revision(candidate))
+		if err != nil {
+			continue
+		}
+		// Peel annotated tag objects to their target commit
+		if tagObj, tagErr := r.raw.TagObject(*hash); tagErr == nil {
+			target := tagObj.Target
+			return target, nil
+		}
+		return *hash, nil
+	}
+	return plumbing.ZeroHash, fmt.Errorf("could not resolve ref %q (tried %v)", refName, candidates)
+}
+
+// ListCommitsSinceRef lists commits reachable from HEAD but not from refName —
+// equivalent to `git log refName..HEAD`. Used on pull_request events to lint
+// only the PR's own commits (base ref → HEAD), excluding history already on
+// the base branch (including commits reachable via merge-commit parents, as in
+// GitHub's refs/pull/N/merge checkout).
+// Returns commits in reverse-chronological order (newest first).
+func (r *Repository) ListCommitsSinceRef(refName string) ([]Commit, error) {
+	head, err := r.raw.Head()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get HEAD: %w", err)
+	}
+
+	baseHash, err := r.resolveRefToCommit(refName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build the exclusion set: every commit reachable from the base ref.
+	// A stop-hash walk is not sufficient here — on merge commits the base
+	// history is reachable via the second parent and would leak past a
+	// single stop point.
+	excluded := make(map[plumbing.Hash]struct{})
+	baseIter, err := r.raw.Log(&gogit.LogOptions{From: baseHash})
+	if err != nil {
+		return nil, fmt.Errorf("failed to walk base ref %q: %w", refName, err)
+	}
+	err = baseIter.ForEach(func(c *object.Commit) error {
+		excluded[c.Hash] = struct{}{}
+		return nil
+	})
+	baseIter.Close()
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect base commits: %w", err)
+	}
+
+	iter, err := r.raw.Log(&gogit.LogOptions{
+		From:  head.Hash(),
+		Order: gogit.LogOrderCommitterTime,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create log iterator: %w", err)
+	}
+	defer iter.Close()
+
+	var commits []Commit
+	err = iter.ForEach(func(c *object.Commit) error {
+		if _, ok := excluded[c.Hash]; ok {
+			// Reachable from base — skip, but keep walking: with
+			// committer-time ordering, PR commits may interleave with
+			// base commits.
+			return nil
+		}
+		commits = append(commits, Commit{
+			SHA:      c.Hash.String(),
+			ShortSHA: c.Hash.String()[:7],
+			Author:   c.Author.Name,
+			Date:     c.Author.When,
+			Message:  c.Message,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to iterate commits: %w", err)
+	}
+
+	return commits, nil
+}
+
 // ListCommitsBetweenTags lists commits between two tags (exclusive of from, inclusive of to).
 // If from is nil, returns all commits from to back to the repository root (bootstrap case).
 // Returns commits in reverse-chronological order.
