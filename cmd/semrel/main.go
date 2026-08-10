@@ -8,9 +8,9 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/nrkno/semrel/internal/cli"
-	"github.com/nrkno/semrel/internal/git"
-	"github.com/nrkno/semrel/internal/github"
+	"github.com/nrkno/github-action-semantic-release/internal/cli"
+	"github.com/nrkno/github-action-semantic-release/internal/git"
+	"github.com/nrkno/github-action-semantic-release/internal/github"
 )
 
 var (

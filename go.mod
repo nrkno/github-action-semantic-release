@@ -1,4 +1,4 @@
-module github.com/nrkno/semrel
+module github.com/nrkno/github-action-semantic-release
 
 go 1.25.0
 

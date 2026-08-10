@@ -7,11 +7,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/nrkno/semrel/internal/conventional"
-	"github.com/nrkno/semrel/internal/git"
-	"github.com/nrkno/semrel/internal/github"
-	"github.com/nrkno/semrel/internal/notes"
-	"github.com/nrkno/semrel/internal/semver"
+	"github.com/nrkno/github-action-semantic-release/internal/conventional"
+	"github.com/nrkno/github-action-semantic-release/internal/git"
+	"github.com/nrkno/github-action-semantic-release/internal/github"
+	"github.com/nrkno/github-action-semantic-release/internal/notes"
+	"github.com/nrkno/github-action-semantic-release/internal/semver"
 	"github.com/stretchr/testify/require"
 )
 

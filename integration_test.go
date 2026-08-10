@@ -22,9 +22,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	gitpkg "github.com/nrkno/semrel/internal/git"
-	githubpkg "github.com/nrkno/semrel/internal/github"
-	"github.com/nrkno/semrel/internal/cli"
+	gitpkg "github.com/nrkno/github-action-semantic-release/internal/git"
+	githubpkg "github.com/nrkno/github-action-semantic-release/internal/github"
+	"github.com/nrkno/github-action-semantic-release/internal/cli"
 )
 
 // setupInMemoryRepo creates an in-memory git repository with initial commits.

@@ -26,7 +26,7 @@ briefly published. NRK teams consuming that action were exposed.
 ## Package structure
 
 ```
-github.com/nrkno/semrel
+github.com/nrkno/github-action-semantic-release
 │
 ├── cmd/semrel/           Entry point — wires concrete clients, injects into CLI
 │
