@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/nrkno/semrel/internal/conventional"
+	"github.com/nrkno/github-action-semantic-release/internal/conventional"
 )
 
 // PR represents a pull request link

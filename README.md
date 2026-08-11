@@ -75,7 +75,7 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: '1.25'
-      - run: go build -o semrel github.com/nrkno/semrel/cmd/semrel
+      - run: go build -o semrel github.com/nrkno/github-action-semantic-release/cmd/semrel
       - id: semrel
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

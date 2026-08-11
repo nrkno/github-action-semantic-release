@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nrkno/semrel/internal/conventional"
+	"github.com/nrkno/github-action-semantic-release/internal/conventional"
 )
 
 func TestGenerate_EmptyCommits(t *testing.T) {
