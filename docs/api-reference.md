@@ -3,7 +3,7 @@ type: API Reference
 title: semrel API reference
 description: Complete reference for all semrel subcommands — synopsis, flags, exit codes, stdout/stderr behaviour, and GITHUB_OUTPUT fields emitted.
 tags: [api-reference, subcommands, exit-codes, flags, github-output]
-timestamp: 2026-06-30
+timestamp: 2026-08-12
 ---
 
 # API reference
@@ -48,7 +48,7 @@ semrel lint [--from-ref <ref>] [--to-ref <ref>]
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--from-ref` | string | auto | Range start. On `pull_request`: `GITHUB_BASE_REF`. On `push`/`release`: latest annotated tag. On other events: beginning of history. |
+| `--from-ref` | string | auto | Range start. On `pull_request`: `GITHUB_BASE_REF`. On `push`: pushed commits from `GITHUB_EVENT_PATH` (falls back to latest annotated tag when payload is unavailable). On `release`: latest annotated tag. On other events: beginning of history. Explicit `--from-ref` overrides all automatic detection. |
 | `--to-ref` | string | `HEAD` | Range end. |
 
 ### Automatic range detection
@@ -56,9 +56,17 @@ semrel lint [--from-ref <ref>] [--to-ref <ref>]
 | `GITHUB_EVENT_NAME` | Default `--from-ref` | Default `--to-ref` |
 | ------------------- | -------------------- | ------------------ |
 | `pull_request` | `GITHUB_BASE_REF` (target branch) | `HEAD` |
-| `push` | latest annotated tag | `HEAD` |
+| `push` | pushed commits from `GITHUB_EVENT_PATH` | pushed commits from `GITHUB_EVENT_PATH` |
 | `release` | latest annotated tag | `HEAD` |
 | *(other / empty)* | beginning of history | `HEAD` |
+
+> **Push event payload:** On `push` events, `semrel lint` reads the pushed
+> commits directly from the GitHub event payload (`GITHUB_EVENT_PATH`)
+> instead of walking git history. This avoids full-history linting in tagless
+> repositories and correctly handles first pushes to new branches. If the
+> payload is unavailable or unreadable, semrel falls back to the previous
+> tag-based behaviour. Explicit `--from-ref` always overrides automatic
+> detection.
 
 ### Exit codes
 

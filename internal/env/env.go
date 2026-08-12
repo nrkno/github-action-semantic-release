@@ -1,9 +1,11 @@
 package env
 
 import (
+	"encoding/json"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Context holds all GitHub Actions environment variables.
@@ -25,6 +27,17 @@ type Context struct {
 	IsGitHubActions bool   // true if GITHUB_ACTIONS == "true"
 	PRNumber        int    // extracted from GITHUB_REF; 0 if not a PR
 	HasToken        bool   // true if Token != ""
+	PushPayloadLoaded bool // true when a push event payload was read successfully
+	PushBefore      string // push event before SHA
+	PushAfter       string // push event after SHA
+	PushCommits     []PushCommit // commits listed in the push event payload
+}
+
+// PushCommit is the subset of a GitHub push event commit used by lint.
+type PushCommit struct {
+	ID        string
+	Message   string
+	Timestamp time.Time
 }
 
 // Load reads all GITHUB_* environment variables and returns a Context.
@@ -65,7 +78,48 @@ func Load() Context {
 	// Extract PR number from GITHUB_REF
 	ctx.PRNumber = prNumberFromRef(ctx.Ref)
 
+	if ctx.EventName == "push" {
+		ctx.PushBefore, ctx.PushAfter, ctx.PushCommits, ctx.PushPayloadLoaded = loadPushPayload(ctx.EventPath)
+	}
+
 	return ctx
+}
+
+type pushEventPayload struct {
+	Before  string `json:"before"`
+	After   string `json:"after"`
+	Commits []struct {
+		ID        string    `json:"id"`
+		Message   string    `json:"message"`
+		Timestamp time.Time `json:"timestamp"`
+	} `json:"commits"`
+}
+
+func loadPushPayload(path string) (before, after string, commits []PushCommit, loaded bool) {
+	if path == "" {
+		return "", "", nil, false
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", nil, false
+	}
+
+	var payload pushEventPayload
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return "", "", nil, false
+	}
+
+	out := make([]PushCommit, 0, len(payload.Commits))
+	for _, commit := range payload.Commits {
+		out = append(out, PushCommit{
+			ID:        commit.ID,
+			Message:   commit.Message,
+			Timestamp: commit.Timestamp,
+		})
+	}
+
+	return payload.Before, payload.After, out, true
 }
 
 // prNumberFromRef extracts the PR number from GITHUB_REF.

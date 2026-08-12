@@ -3,7 +3,7 @@ type: Configuration
 title: semrel configuration reference
 description: All environment variables consumed by semrel, subcommand flags, and GITHUB_OUTPUT fields written on a successful release.
 tags: [configuration, environment-variables, flags, github-output]
-timestamp: 2026-07-16
+timestamp: 2026-08-12
 ---
 
 # Configuration
@@ -32,7 +32,7 @@ rule overrides.
 | `GITHUB_REF` | Full ref of the event (e.g., `refs/heads/main`, `refs/pull/42/merge`). Used to extract the PR number on `pull_request` events. |
 | `GITHUB_REF_NAME` | Short ref name (e.g., `main`, `42/merge`). |
 | `GITHUB_SHA` | SHA of the commit that triggered the workflow. |
-| `GITHUB_EVENT_NAME` | Event type that triggered the workflow (`push`, `pull_request`, `release`, etc.). Used by `lint` to determine the commit range. |
+| `GITHUB_EVENT_NAME` | Event type that triggered the workflow (`push`, `pull_request`, `release`, etc.). Used by `lint` to determine the commit range. On `push` events, lint reads pushed commits from the event payload file. |
 | `GITHUB_BASE_REF` | Target branch of a pull request. Only set on `pull_request` events. Used by `lint` to define the range start. |
 | `GITHUB_OUTPUT` | Path to the step output file. semrel appends `key=value` lines here when outputs are available. |
 | `GITHUB_API_URL` | GitHub API base URL. Defaults to `https://api.github.com`. Override for GitHub Enterprise Server. |
@@ -82,7 +82,7 @@ passed to `semrel notify`.
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--from-ref` | string | auto-detected | Start of the commit range. Defaults to `GITHUB_BASE_REF` on `pull_request` events, or the latest annotated tag on `push`/`release` events. |
+| `--from-ref` | string | auto-detected | Start of the commit range. Defaults to `GITHUB_BASE_REF` on `pull_request` events. On `push` events, automatic mode reads pushed commits from `GITHUB_EVENT_PATH`; explicit `--from-ref` overrides that and uses a git range. On `release` events, defaults to the latest annotated tag. |
 | `--to-ref` | string | `HEAD` | End of the commit range. |
 
 ### `release`

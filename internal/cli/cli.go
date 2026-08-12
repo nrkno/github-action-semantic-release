@@ -98,6 +98,9 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			}
 
 			// Determine lint range based on context
+			var commits []git.Commit
+			var err error
+			commitsResolved := false
 			switch ghEnv.EventName {
 			case "pull_request":
 				// PR context: base → HEAD
@@ -107,8 +110,30 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 				if toRef == "" {
 					toRef = "HEAD"
 				}
-			case "push", "release":
-				// Push/release context: previous tag → HEAD
+			case "push":
+				// Push context: validate exactly the commits in the push payload when available.
+				if fromRef == "" && toRef == "" && ghEnv.PushPayloadLoaded {
+					fromRef = ghEnv.PushBefore
+					toRef = ghEnv.PushAfter
+					commits = commitsFromPushPayload(ghEnv.PushCommits)
+					commitsResolved = true
+				} else {
+					if fromRef == "" {
+						tag, err := gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
+						if err != nil {
+							logger.Error("failed to find latest tag", "error", err)
+							return err
+						}
+						if tag != nil {
+							fromRef = tag.Name
+						}
+					}
+					if toRef == "" {
+						toRef = "HEAD"
+					}
+				}
+			case "release":
+				// Release context: previous tag → HEAD
 				if fromRef == "" {
 					tag, err := gitClient.FindLatestAnnotatedTag(cfg.TagPrefix)
 					if err != nil {
@@ -133,18 +158,17 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 			}
 
 			// List commits in range
-			var commits []git.Commit
-			var err error
-
-			if fromRef == "" {
-				// Bootstrap: all commits
-				commits, err = gitClient.ListCommitsSinceTag(nil)
-			} else {
-				// fromRef..HEAD — on pull_request events fromRef is the base
-				// branch (lint only the PR's own commits; history already on
-				// the base branch is out of scope), on push/release it is the
-				// latest tag, and --from-ref overrides both.
-				commits, err = gitClient.ListCommitsSinceRef(fromRef)
+			if !commitsResolved {
+				if fromRef == "" {
+					// Bootstrap: all commits
+					commits, err = gitClient.ListCommitsSinceTag(nil)
+				} else {
+					// fromRef..HEAD — on pull_request events fromRef is the base
+					// branch (lint only the PR's own commits; history already on
+					// the base branch is out of scope), on release it is the
+					// latest tag, and --from-ref overrides automatic detection.
+					commits, err = gitClient.ListCommitsSinceRef(fromRef)
+				}
 			}
 
 			if err != nil {
@@ -815,6 +839,23 @@ func countByType(commits []conventional.Commit, t conventional.CommitType) int {
 		}
 	}
 	return n
+}
+
+func commitsFromPushPayload(pushCommits []env.PushCommit) []git.Commit {
+	commits := make([]git.Commit, 0, len(pushCommits))
+	for _, c := range pushCommits {
+		shortSHA := c.ID
+		if len(shortSHA) > 7 {
+			shortSHA = shortSHA[:7]
+		}
+		commits = append(commits, git.Commit{
+			SHA:      c.ID,
+			ShortSHA: shortSHA,
+			Date:     c.Timestamp,
+			Message:  c.Message,
+		})
+	}
+	return commits
 }
 
 func countBreaking(commits []conventional.Commit) int {

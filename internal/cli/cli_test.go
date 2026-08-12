@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/nrkno/github-action-semantic-release/internal/conventional"
@@ -28,10 +29,12 @@ func newTestTag(name, sha string) *git.Tag {
 type mockGitClient struct {
 	latestTag          *git.Tag
 	latestTagErr       error
+	latestTagCalls     int
 	findTagByNameTag   *git.Tag
 	findTagByNameErr   error
 	commits            []git.Commit
 	commitsErr         error
+	commitsSinceTagCalls int
 	commitsSinceRef    []git.Commit
 	commitsSinceRefErr error
 	sinceRefArg        string
@@ -47,6 +50,7 @@ type mockGitClient struct {
 }
 
 func (m *mockGitClient) FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error) {
+	m.latestTagCalls++
 	if m.isShallowRepo {
 		return nil, git.ShallowRepoError{Message: "repository is a shallow clone"}
 	}
@@ -58,6 +62,7 @@ func (m *mockGitClient) FindTagByName(name string) (*git.Tag, error) {
 }
 
 func (m *mockGitClient) ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error) {
+	m.commitsSinceTagCalls++
 	return m.commits, m.commitsErr
 }
 
@@ -268,9 +273,109 @@ func TestLintPullRequestBaseRefViolations(t *testing.T) {
 	}
 }
 
+func TestLintPushUsesEventPayloadCommits(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	payload := `{
+		"before": "1111111111111111111111111111111111111111",
+		"after": "2222222222222222222222222222222222222222",
+		"commits": [
+			{
+				"id": "2222222222222222222222222222222222222222",
+				"message": "chore: patch azure devops to latest release",
+				"timestamp": "2026-08-12T06:44:19Z"
+			}
+		]
+	}`
+	path := filepath.Join(t.TempDir(), "event.json")
+	require.NoError(t, os.WriteFile(path, []byte(payload), 0o600))
+	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_EVENT_PATH", path)
+	t.Setenv("GITHUB_BASE_REF", "")
+
+	gitClient := &mockGitClient{
+		commits: []git.Commit{{
+			SHA:      "badbadbadbad",
+			ShortSHA: "badbadb",
+			Message:  "historical non conventional commit",
+		}},
+	}
+	cmd := cmdLint(gitClient, logger)
+	cmd.SetArgs([]string{})
+
+	err := cmd.ExecuteContext(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, 0, gitClient.latestTagCalls)
+	require.Equal(t, 0, gitClient.commitsSinceTagCalls)
+}
+
+func TestLintPushPayloadViolationsFail(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	payload := `{
+		"before": "1111111111111111111111111111111111111111",
+		"after": "2222222222222222222222222222222222222222",
+		"commits": [
+			{
+				"id": "2222222222222222222222222222222222222222",
+				"message": "small adjustment",
+				"timestamp": "2026-08-12T06:44:19Z"
+			}
+		]
+	}`
+	path := filepath.Join(t.TempDir(), "event.json")
+	require.NoError(t, os.WriteFile(path, []byte(payload), 0o600))
+	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_EVENT_PATH", path)
+	t.Setenv("GITHUB_BASE_REF", "")
+
+	cmd := cmdLint(&mockGitClient{}, logger)
+	cmd.SetArgs([]string{})
+
+	err := cmd.ExecuteContext(context.Background())
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "commit violation")
+}
+
+func TestLintPushExplicitFromRefOverridesPayload(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	payload := `{
+		"before": "1111111111111111111111111111111111111111",
+		"after": "2222222222222222222222222222222222222222",
+		"commits": [
+			{
+				"id": "2222222222222222222222222222222222222222",
+				"message": "bad pushed message",
+				"timestamp": "2026-08-12T06:44:19Z"
+			}
+		]
+	}`
+	path := filepath.Join(t.TempDir(), "event.json")
+	require.NoError(t, os.WriteFile(path, []byte(payload), 0o600))
+	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_EVENT_PATH", path)
+	t.Setenv("GITHUB_BASE_REF", "")
+
+	gitClient := &mockGitClient{
+		commitsSinceRef: []git.Commit{{
+			SHA:      "abc123def456",
+			ShortSHA: "abc123d",
+			Message:  "fix: valid override range",
+		}},
+	}
+	cmd := cmdLint(gitClient, logger)
+	cmd.SetArgs([]string{"--from-ref", "v1.0.0"})
+
+	err := cmd.ExecuteContext(context.Background())
+
+	require.NoError(t, err)
+	require.Equal(t, "v1.0.0", gitClient.sinceRefArg)
+}
+
 func TestLintShallowRepo(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_EVENT_PATH", "") // neutralize CI runner's event payload
 
 	gitClient := &mockGitClient{
 		isShallowRepo: true,
