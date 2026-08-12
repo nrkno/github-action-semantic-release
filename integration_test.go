@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -231,6 +232,50 @@ func TestE2ELintInvalidCommits(t *testing.T) {
 
 	err := root.ExecuteContext(context.Background())
 	assert.Error(t, err, "lint with invalid commits should fail")
+}
+
+func TestE2ELintPushUsesEventPayloadCommits(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	rawRepo := setupInMemoryRepo(t, []struct {
+		message string
+		time    time.Time
+	}{
+		{
+			message: "historical non conventional commit",
+			time:    time.Now().Add(-2 * time.Hour),
+		},
+	})
+
+	payload := `{
+		"before": "1111111111111111111111111111111111111111",
+		"after": "2222222222222222222222222222222222222222",
+		"commits": [
+			{
+				"id": "2222222222222222222222222222222222222222",
+				"message": "chore: patch azure devops to latest release",
+				"timestamp": "2026-08-12T06:44:19Z"
+			}
+		]
+	}`
+	path := filepath.Join(t.TempDir(), "event.json")
+	require.NoError(t, os.WriteFile(path, []byte(payload), 0o600))
+
+	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_EVENT_PATH", path)
+	t.Setenv("GITHUB_BASE_REF", "")
+
+	gitClient := &testGitClient{rawRepo: rawRepo}
+	root := cli.Root(gitClient, &testGitHubClient{}, logger)
+
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"lint"})
+
+	err := root.ExecuteContext(context.Background())
+
+	assert.NoError(t, err, "push lint should validate event payload commits, not historical repository commits")
 }
 
 // TestE2EReleaseNewVersion tests release creating a new version

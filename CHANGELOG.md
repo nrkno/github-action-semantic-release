@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `lint` on `push` events now validates the pushed commits from the GitHub event payload (`GITHUB_EVENT_PATH`) when available, preventing tagless repositories from linting their entire commit history on every branch push. Falls back to previous tag-based behaviour when the payload is unavailable. Explicit `--from-ref` overrides automatic detection.
 - `lint` now actually lints `GITHUB_BASE_REF → HEAD` on `pull_request` events as documented. Previously the base ref was resolved but silently ignored, and the range fell back to latest-annotated-tag → HEAD (or full history when no annotated tag existed), causing PR lint failures for non-conventional commits already merged to the base branch.
 - `lint` ranges now exclude all commits reachable from the range start, including via merge-commit parents. On GitHub's `refs/pull/N/merge` checkout, base-branch history reachable through the merge commit's second parent no longer leaks into the lint range.
 - `--from-ref` is now honored for arbitrary refs (branches, `origin/<branch>`, tags, SHAs) instead of being overridden by the latest-tag lookup.

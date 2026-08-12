@@ -3,10 +3,15 @@ type: Log
 title: semrel documentation log
 description: Dated change log for the semrel docs/ directory, recording every document creation and significant update.
 tags: [log, changelog, documentation]
-timestamp: 2026-07-16
+timestamp: 2026-08-12
 ---
 
 # Documentation log
+
+### 2026-08-12
+
+- **Update** `docs/configuration.md` — documented push-event lint range semantics: `semrel lint` validates pushed commits from `GITHUB_EVENT_PATH` instead of falling back to full-history lint in tagless repositories; updated `--from-ref` description and `GITHUB_EVENT_NAME` row
+- **Update** `docs/api-reference.md` — updated automatic range detection table and `--from-ref` flag description for push-event payload semantics; added explanatory note on push event payload behaviour
 
 ### 2026-07-16
 

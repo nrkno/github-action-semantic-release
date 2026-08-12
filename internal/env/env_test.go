@@ -1,7 +1,10 @@
 package env
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoad_AllVarsSet(t *testing.T) {
@@ -394,5 +397,66 @@ func TestLoad_Idempotent(t *testing.T) {
 	}
 	if ctx1.PRNumber != ctx2.PRNumber {
 		t.Errorf("PRNumber mismatch: %d vs %d", ctx1.PRNumber, ctx2.PRNumber)
+	}
+}
+
+func TestLoad_PushEventPayload(t *testing.T) {
+	payload := `{
+		"before": "1111111111111111111111111111111111111111",
+		"after": "2222222222222222222222222222222222222222",
+		"commits": [
+			{
+				"id": "2222222222222222222222222222222222222222",
+				"message": "feat: add thing",
+				"timestamp": "2026-08-12T06:44:19Z"
+			}
+		]
+	}`
+	path := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("failed to write event payload: %v", err)
+	}
+
+	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_EVENT_PATH", path)
+
+	ctx := Load()
+
+	if !ctx.PushPayloadLoaded {
+		t.Fatal("expected push payload to be loaded")
+	}
+	if ctx.PushBefore != "1111111111111111111111111111111111111111" {
+		t.Errorf("PushBefore: got %q", ctx.PushBefore)
+	}
+	if ctx.PushAfter != "2222222222222222222222222222222222222222" {
+		t.Errorf("PushAfter: got %q", ctx.PushAfter)
+	}
+	if len(ctx.PushCommits) != 1 {
+		t.Fatalf("expected 1 pushed commit, got %d", len(ctx.PushCommits))
+	}
+	commit := ctx.PushCommits[0]
+	if commit.ID != "2222222222222222222222222222222222222222" {
+		t.Errorf("ID: got %q", commit.ID)
+	}
+	if commit.Message != "feat: add thing" {
+		t.Errorf("Message: got %q", commit.Message)
+	}
+	wantTime := time.Date(2026, 8, 12, 6, 44, 19, 0, time.UTC)
+	if !commit.Timestamp.Equal(wantTime) {
+		t.Errorf("Timestamp: got %v, want %v", commit.Timestamp, wantTime)
+	}
+}
+
+func TestLoad_PushEventPayloadMissingFileDoesNotFail(t *testing.T) {
+	t.Setenv("GITHUB_EVENT_NAME", "push")
+	t.Setenv("GITHUB_EVENT_PATH", filepath.Join(t.TempDir(), "missing.json"))
+
+	ctx := Load()
+
+	if ctx.PushPayloadLoaded {
+		t.Fatal("expected missing push payload not to be loaded")
+	}
+	if len(ctx.PushCommits) != 0 {
+		t.Fatalf("expected no pushed commits, got %d", len(ctx.PushCommits))
 	}
 }
