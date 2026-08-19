@@ -3,7 +3,7 @@ type: Architecture
 title: semrel architecture
 description: Why semrel exists, internal package structure, and key design decisions including go-git, the alpine container image, idempotency ladder, and shallow clone guard.
 tags: [architecture, supply-chain, go-git, alpine, cosign, idempotency]
-timestamp: 2026-07-01
+timestamp: 2026-08-19
 ---
 
 # Architecture
@@ -34,8 +34,8 @@ github.com/nrkno/github-action-semantic-release
     ├── cli/              Cobra subcommand definitions; accepts interface-injected clients
     ├── conventional/     Conventional commit parser (type, scope, description, breaking)
     ├── env/              Reads and validates GitHub Actions environment variables
-    ├── git/              go-git wrapper: FindLatestAnnotatedTag, ListCommitsSinceTag,
-    │                     CreateAnnotatedTag, PushTag (BasicAuth over HTTPS)
+    ├── git/              go-git wrapper: FindLatestTag (semver-max across all tag types),
+    │                     ListCommitsSinceTag, CreateAnnotatedTag, PushTag (BasicAuth over HTTPS)
     ├── github/           google/go-github REST client wrapper: GetReleaseByTag,
     │                     CreateRelease (with 422→re-GET idempotency), ListPRsForCommit,
     │                     SearchPRsForCommit, PostPRComment, FindPRComment
@@ -131,6 +131,31 @@ Rung 2 includes a `422 already_exists` retry: if `CreateRelease` returns 422,
 semrel calls `GetReleaseByTag` to retrieve the release that was created concurrently
 and proceeds as if rung 1 had matched.
 
+### Version baseline detection: semver-max across all tags
+
+`FindLatestTag` collects all git tags matching `cfg.TagPrefix`, parses each as semver,
+discards non-parseable names, and returns the tag with the highest semver value. Tag type
+(annotated vs lightweight) is not a factor in selection.
+
+**Why:** The previous strategy (`FindLatestAnnotatedTag`) preferred annotated tags and
+fell back to lightweight only when zero annotated tags existed. This was correct for
+a clean install but broke for repos migrated from `codfish/semantic-release`: codfish
+created annotated `vMAJOR.MINOR` alias tags for every release, so any migrated repo has
+annotated aliases from its entire pre-migration history. These aliases permanently shadow
+post-migration releases (which produce only lightweight `vMAJOR.MINOR.PATCH` tags).
+
+**Sort key:** Semver ordering is a total order and is immune to clock skew, timezone
+normalization, and the `Author.When` vs `Committer.When` ambiguity that affected the
+previous timestamp-based sort.
+
+**Tiebreaker:** Masterminds/semver treats `v4.0` and `v4.0.0` as equal (`Compare() == 0`).
+Because `sort.Slice` is not stable, a secondary tiebreaker is applied: prefer the tag with
+more dot-separated components (`strings.Count(name, ".")` descending), then `name`
+descending lexicographically as the final tiebreaker. This ensures `v4.0.0` consistently
+beats `v4.0`.
+
+**ADR:** See [ADR-001](architecture/adr-001-version-baseline-detection.md).
+
 ### SHA comparison
 
 The tag SHA check in rung 2 compares `tag.TargetSHA()` (the commit a annotated tag
@@ -142,13 +167,12 @@ the same next version for different commits.
 ### Shallow clone requirement
 
 semrel requires a full clone (`fetch-depth: 0`). The `release`, `lint`, and `notes`
-subcommands all walk commit history back to the previous annotated tag. A shallow
-clone truncates that history, causing `FindLatestAnnotatedTag` to return `nil` and
-producing incorrect version calculations.
+subcommands all walk commit history back to the previous tag. A shallow clone truncates
+that history.
 
-The startup code in `internal/git` detects a shallow repository and exits with
-code 2 (system error) to surface the misconfiguration clearly rather than silently
-producing a wrong result.
+A shallow clone causes `OpenRepo()` to return `ShallowRepoError`. The startup code in
+`cmd/semrel/main.go` catches this error, logs a diagnostic, and exits with code 2 —
+`FindLatestTag` is never called.
 
 ---
 
