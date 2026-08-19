@@ -12,6 +12,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/storage/memory"
+
+	internalSemver "github.com/nrkno/github-action-semantic-release/internal/semver"
 )
 
 // createInMemoryRepo creates an in-memory git repository for testing
@@ -205,13 +207,13 @@ func TestShallowRepoError_Error(t *testing.T) {
 	}
 }
 
-// TestFindLatestAnnotatedTag_BootstrapNoTags tests finding tags when none exist
-func TestFindLatestAnnotatedTag_BootstrapNoTags(t *testing.T) {
+// TestFindLatestTag_BootstrapNoTags tests finding tags when none exist
+func TestFindLatestTag_BootstrapNoTags(t *testing.T) {
 	repo := createInMemoryRepo(t)
 	createCommit(t, repo, "file.txt", "content", "initial commit")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -221,14 +223,14 @@ func TestFindLatestAnnotatedTag_BootstrapNoTags(t *testing.T) {
 	}
 }
 
-// TestFindLatestAnnotatedTag_SingleTag tests finding the only tag
-func TestFindLatestAnnotatedTag_SingleTag(t *testing.T) {
+// TestFindLatestTag_SingleTag tests finding the only tag
+func TestFindLatestTag_SingleTag(t *testing.T) {
 	repo := createInMemoryRepo(t)
 	createCommit(t, repo, "file.txt", "content", "initial commit")
 	createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -241,19 +243,20 @@ func TestFindLatestAnnotatedTag_SingleTag(t *testing.T) {
 	}
 }
 
-// TestFindLatestAnnotatedTag_MultipleTags tests finding the latest of multiple tags
-func TestFindLatestAnnotatedTag_MultipleTags(t *testing.T) {
+// TestFindLatestTag_MultipleTags tests semver-max selection across multiple tags.
+// v1.1.0 > v1.0.0 by semver — the assertion is correct under the new sort key.
+func TestFindLatestTag_MultipleTags(t *testing.T) {
 	repo := createInMemoryRepo(t)
 	now := time.Now()
 	createCommitWithTime(t, repo, "file.txt", "content v1", "commit 1", now)
 	createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
-	// Create second commit with explicit later time
+	// Create second commit with a distinct version that is semver-larger.
 	createCommitWithTime(t, repo, "file.txt", "content v2", "commit 2", now.Add(1*time.Second))
 	tag2Obj := createAnnotatedTag(t, repo, "v1.1.0", "Release 1.1.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -262,37 +265,29 @@ func TestFindLatestAnnotatedTag_MultipleTags(t *testing.T) {
 		t.Fatal("expected tag, got nil")
 	}
 	if tag.Name != "v1.1.0" {
-		t.Errorf("expected latest tag 'v1.1.0', got '%s'", tag.Name)
+		t.Errorf("expected semver-max tag 'v1.1.0', got '%s'", tag.Name)
 	}
 	if tag.SHA != tag2Obj.Hash.String() {
 		t.Errorf("expected tag SHA to be %s, got %s", tag2Obj.Hash.String(), tag.SHA)
 	}
 }
 
-// TestFindLatestAnnotatedTag_IgnoresLightweightTags tests that lightweight tags are ignored
-func TestFindLatestAnnotatedTag_IgnoresLightweightTags(t *testing.T) {
+// TestFindLatestTag_SemverMaxAcrossTagTypes asserts that semver-max selects the
+// highest-versioned tag regardless of tag type. Lightweight v2.0.0 beats annotated v1.0.0.
+func TestFindLatestTag_SemverMaxAcrossTagTypes(t *testing.T) {
 	repo := createInMemoryRepo(t)
-	createCommit(t, repo, "file.txt", "content", "initial commit")
+	now := time.Now()
 
-	// Create annotated tag
-	annotatedTagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
+	// Commit A → annotated tag v1.0.0
+	createCommitWithTime(t, repo, "file.txt", "content 1", "commit 1", now)
+	createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
-	// Lightweight tag = a ref pointing directly at a commit hash, no tag object.
-	// Do NOT use repo.CreateTag() — that path requires Tagger and creates an annotated tag.
-	head, err := repo.Head()
-	if err != nil {
-		t.Fatalf("failed to get HEAD: %v", err)
-	}
-	lwRef := plumbing.NewHashReference(
-		plumbing.NewTagReferenceName("v0.0.1-lightweight"),
-		head.Hash(),
-	)
-	if err := repo.Storer.SetReference(lwRef); err != nil {
-		t.Fatalf("failed to create lightweight tag: %v", err)
-	}
+	// Commit B → lightweight tag v2.0.0 (higher semver)
+	createCommitWithTime(t, repo, "file.txt", "content 2", "commit 2", now.Add(1*time.Second))
+	createLightweightTag(t, repo, "v2.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -300,11 +295,11 @@ func TestFindLatestAnnotatedTag_IgnoresLightweightTags(t *testing.T) {
 	if tag == nil {
 		t.Fatal("expected tag, got nil")
 	}
-	if tag.Name != "v1.0.0" {
-		t.Errorf("expected annotated tag 'v1.0.0', got '%s'", tag.Name)
+	if tag.Name != "v2.0.0" {
+		t.Errorf("expected semver-max tag 'v2.0.0', got '%s'", tag.Name)
 	}
-	if tag.SHA != annotatedTagObj.Hash.String() {
-		t.Errorf("expected tag SHA to be %s, got %s", annotatedTagObj.Hash.String(), tag.SHA)
+	if tag.IsAnnotated {
+		t.Errorf("expected IsAnnotated=false for lightweight winner, got true")
 	}
 }
 
@@ -538,7 +533,7 @@ func TestTag_TargetSHA_DistinctFromTagSHA(t *testing.T) {
 	tagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -620,7 +615,7 @@ func TestTag_NameWithoutRefsPrefix(t *testing.T) {
 	createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -703,9 +698,10 @@ func TestOpenRepo_ShallowRepoDetection_FileCheck(t *testing.T) {
 	}
 }
 
-// TestFindLatestAnnotatedTag_FallsBackToLightweight verifies that when no annotated tags exist,
-// the most recent lightweight tag is returned with IsAnnotated=false.
-func TestFindLatestAnnotatedTag_FallsBackToLightweight(t *testing.T) {
+// TestFindLatestTag_LightweightOnly verifies semver-max across a set of lightweight tags.
+// v1.2.0 is the highest semver value (1.2.0 > 1.1.0 > 1.0.0) and must be returned with
+// IsAnnotated=false.
+func TestFindLatestTag_LightweightOnly(t *testing.T) {
 	repo := createInMemoryRepo(t)
 	now := time.Now()
 
@@ -713,80 +709,78 @@ func TestFindLatestAnnotatedTag_FallsBackToLightweight(t *testing.T) {
 	createCommitWithTime(t, repo, "file.txt", "content 1", "commit 1", now)
 	createLightweightTag(t, repo, "v1.0.0")
 
-	// Commit 2 → lightweight tag v1.1.0 (newer)
+	// Commit 2 → lightweight tag v1.1.0
 	createCommitWithTime(t, repo, "file.txt", "content 2", "commit 2", now.Add(2*time.Second))
 	createLightweightTag(t, repo, "v1.1.0")
 
-	// Commit 3 → lightweight tag v1.2.0 (newest)
+	// Commit 3 → lightweight tag v1.2.0 (semver-max)
 	createCommitWithTime(t, repo, "file.txt", "content 3", "commit 3", now.Add(4*time.Second))
 	createLightweightTag(t, repo, "v1.2.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if tag == nil {
-		t.Fatal("expected lightweight tag fallback, got nil")
+		t.Fatal("expected tag, got nil")
 	}
 	if tag.Name != "v1.2.0" {
-		t.Errorf("expected most recent lightweight tag 'v1.2.0', got %q", tag.Name)
+		t.Errorf("expected semver-max lightweight tag 'v1.2.0', got %q", tag.Name)
 	}
 	if tag.IsAnnotated {
 		t.Errorf("expected IsAnnotated=false for lightweight tag, got true")
 	}
 }
 
-// TestFindLatestAnnotatedTag_PrefersAnnotatedOverLightweight verifies annotated tags
-// take priority over newer lightweight tags.
-func TestFindLatestAnnotatedTag_PrefersAnnotatedOverLightweight(t *testing.T) {
+// TestFindLatestTag_SemverMaxWinsRegardlessOfType verifies that semver-max wins
+// regardless of tag type. Lightweight v2.0.0 beats annotated v1.0.0 because 2.0.0 > 1.0.0.
+func TestFindLatestTag_SemverMaxWinsRegardlessOfType(t *testing.T) {
 	repo := createInMemoryRepo(t)
 	now := time.Now()
 
 	// Commit 1 → annotated tag v1.0.0
 	createCommitWithTime(t, repo, "file.txt", "content 1", "commit 1", now)
-	annotatedTagObj := createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
+	createAnnotatedTag(t, repo, "v1.0.0", "Release 1.0.0")
 
-	// Commit 2 → lightweight tag v2.0.0 (newer commit, but lightweight)
+	// Commit 2 → lightweight tag v2.0.0 (higher semver, lightweight)
 	createCommitWithTime(t, repo, "file.txt", "content 2", "commit 2", now.Add(2*time.Second))
 	createLightweightTag(t, repo, "v2.0.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if tag == nil {
-		t.Fatal("expected annotated tag, got nil")
+		t.Fatal("expected tag, got nil")
 	}
-	if tag.Name != "v1.0.0" {
-		t.Errorf("expected annotated tag 'v1.0.0', got %q", tag.Name)
+	// semver-max: v2.0.0 > v1.0.0 regardless of annotated vs lightweight
+	if tag.Name != "v2.0.0" {
+		t.Errorf("expected semver-max tag 'v2.0.0', got %q", tag.Name)
 	}
-	if !tag.IsAnnotated {
-		t.Errorf("expected IsAnnotated=true for annotated tag, got false")
-	}
-	if tag.SHA != annotatedTagObj.Hash.String() {
-		t.Errorf("expected tag SHA %s, got %s", annotatedTagObj.Hash.String(), tag.SHA)
+	if tag.IsAnnotated {
+		t.Errorf("expected IsAnnotated=false for lightweight winner, got true")
 	}
 }
 
-// TestFindLatestAnnotatedTag_LightweightTagIsAnnotatedFalse verifies IsAnnotated=false
-// for a single lightweight tag fallback.
-func TestFindLatestAnnotatedTag_LightweightTagIsAnnotatedFalse(t *testing.T) {
+// TestFindLatestTag_LightweightTagIsAnnotatedFalse verifies IsAnnotated=false
+// for a single lightweight tag.
+func TestFindLatestTag_LightweightTagIsAnnotatedFalse(t *testing.T) {
 	repo := createInMemoryRepo(t)
 	createCommit(t, repo, "file.txt", "content", "initial commit")
 	createLightweightTag(t, repo, "v0.9.0")
 
 	r := &Repository{raw: repo}
-	tag, err := r.FindLatestAnnotatedTag("")
+	tag, err := r.FindLatestTag("")
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if tag == nil {
-		t.Fatal("expected lightweight tag fallback, got nil")
+		t.Fatal("expected tag, got nil")
 	}
 	if tag.Name != "v0.9.0" {
 		t.Errorf("expected tag name 'v0.9.0', got %q", tag.Name)
@@ -1035,6 +1029,166 @@ func TestListCommitsSinceRef_UnresolvableRef(t *testing.T) {
 		t.Errorf("error should mention the ref name, got: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ADR-001 confirmation tests (CT-1, CT-2, CT-3, CT-5)
+// ---------------------------------------------------------------------------
+
+// ADR-CT-1: TestFindLatestTag_LightweightBeatsOlderAnnotated confirms that a
+// lightweight v4.0.0 tag on a later commit beats an older annotated v3.6 tag.
+// This is the core ADR-001 invariant: semver-max across all tag types.
+func TestFindLatestTag_LightweightBeatsOlderAnnotated(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	// Commit A → annotated tag v3.6
+	createCommitWithTime(t, repo, "file.txt", "content A", "commit A", now)
+	createAnnotatedTag(t, repo, "v3.6", "Release v3.6")
+
+	// Commit B → lightweight tag v4.0.0 (higher semver)
+	createCommitWithTime(t, repo, "file.txt", "content B", "commit B", now.Add(1*time.Second))
+	createLightweightTag(t, repo, "v4.0.0")
+
+	r := &Repository{raw: repo}
+	tag, err := r.FindLatestTag("")
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if tag == nil {
+		t.Fatal("expected tag, got nil")
+	}
+	if tag.Name != "v4.0.0" {
+		t.Errorf("ADR-CT-1: expected 'v4.0.0' (lightweight semver-max), got %q", tag.Name)
+	}
+	if tag.IsAnnotated {
+		t.Errorf("ADR-CT-1: expected IsAnnotated=false for lightweight winner, got true")
+	}
+}
+
+// ADR-CT-2: TestFindLatestTag_MigrationScenario mirrors the confirmed incident
+// repo (nrkno/iac-terraform-azure-postgres-flexible): 14 annotated vMAJOR.MINOR
+// alias tags from pre-migration history, followed by lightweight vMAJOR.MINOR.PATCH
+// tags from post-migration releases. The tiebreaker between v4.0 and v4.0.0 is
+// exercised because both parse to semver 4.0.0 under Masterminds/semver.
+func TestFindLatestTag_MigrationScenario(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+	step := time.Second
+
+	// 14 annotated alias tags: v1.1 through v3.6 (pre-migration, codfish-style)
+	annotatedAliases := []string{
+		"v1.1", "v1.2", "v1.3",
+		"v2.0", "v2.1", "v2.2", "v2.3",
+		"v3.0", "v3.1", "v3.2", "v3.3", "v3.4", "v3.5", "v3.6",
+	}
+	for i, alias := range annotatedAliases {
+		createCommitWithTime(t, repo, "file.txt", "content "+alias, "commit "+alias,
+			now.Add(time.Duration(i)*step))
+		createAnnotatedTag(t, repo, alias, "Release "+alias)
+	}
+
+	// Post-migration lightweight patch tags
+	offset := len(annotatedAliases)
+	lwTags := []string{"v3.6.0", "v3.7.0", "v3.8.0"}
+	for i, lw := range lwTags {
+		createCommitWithTime(t, repo, "file.txt", "content "+lw, "commit "+lw,
+			now.Add(time.Duration(offset+i)*step))
+		createLightweightTag(t, repo, lw)
+	}
+
+	// v4.0 at commit X — distinct from v4.0.0's commit (tiebreaker must fire)
+	offset += len(lwTags)
+	createCommitWithTime(t, repo, "file.txt", "content v4.0", "commit v4.0",
+		now.Add(time.Duration(offset)*step))
+	createLightweightTag(t, repo, "v4.0")
+
+	// v4.0.0 at commit Y (Y ≠ X)
+	offset++
+	createCommitWithTime(t, repo, "file.txt", "content v4.0.0", "commit v4.0.0",
+		now.Add(time.Duration(offset)*step))
+	createLightweightTag(t, repo, "v4.0.0")
+
+	// One additional commit after v4.0.0 (simulates HEAD being ahead of the release)
+	offset++
+	createCommitWithTime(t, repo, "file.txt", "content head", "feat: feature after release",
+		now.Add(time.Duration(offset)*step))
+
+	r := &Repository{raw: repo}
+	tag, err := r.FindLatestTag("")
+
+	if err != nil {
+		t.Fatalf("ADR-CT-2: unexpected error: %v", err)
+	}
+	if tag == nil {
+		t.Fatal("ADR-CT-2: expected tag, got nil")
+	}
+	if tag.Name != "v4.0.0" {
+		t.Errorf("ADR-CT-2: expected baseline 'v4.0.0', got %q (tiebreaker: v4.0.0 beats v4.0 by dot count)", tag.Name)
+	}
+	if tag.IsAnnotated {
+		t.Errorf("ADR-CT-2: expected IsAnnotated=false for lightweight winner, got true")
+	}
+	// Round-trip sanity: tag name must parse as valid semver
+	if _, perr := internalSemver.ParseVersionFromTag(tag.Name, ""); perr != nil {
+		t.Errorf("ADR-CT-2: baseline tag %q does not parse as semver: %v", tag.Name, perr)
+	}
+}
+
+// ADR-CT-3: TestFindLatestTag_BootstrapNoParseable confirms that a repo with
+// no semver-parseable tags returns nil, nil (the bootstrap path).
+func TestFindLatestTag_BootstrapNoParseable(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	createCommit(t, repo, "file.txt", "content", "initial commit")
+	createLightweightTag(t, repo, "garbage-not-semver")
+
+	r := &Repository{raw: repo}
+	tag, err := r.FindLatestTag("")
+
+	if err != nil {
+		t.Fatalf("ADR-CT-3: unexpected error: %v", err)
+	}
+	if tag != nil {
+		t.Errorf("ADR-CT-3: expected nil for zero parseable tags, got %v", tag)
+	}
+}
+
+// ADR-CT-5: TestFindLatestTag_TiebreakerDeterminism confirms that when two tags
+// parse to the same semver value (v4.0 and v4.0.0 both parse to 4.0.0 under
+// Masterminds/semver), the tiebreaker consistently selects v4.0.0 (more dot
+// components) across repeated calls. This guards against sort.Slice instability.
+func TestFindLatestTag_TiebreakerDeterminism(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+
+	// Commit A → lightweight tag v4.0
+	createCommitWithTime(t, repo, "file.txt", "content A", "commit A", now)
+	createLightweightTag(t, repo, "v4.0")
+
+	// Commit B → lightweight tag v4.0.0 (different commit, same parsed semver)
+	createCommitWithTime(t, repo, "file.txt", "content B", "commit B", now.Add(1*time.Second))
+	createLightweightTag(t, repo, "v4.0.0")
+
+	r := &Repository{raw: repo}
+
+	// Call three times to expose any sort instability
+	for i := 0; i < 3; i++ {
+		tag, err := r.FindLatestTag("")
+		if err != nil {
+			t.Fatalf("ADR-CT-5 call %d: unexpected error: %v", i+1, err)
+		}
+		if tag == nil {
+			t.Fatalf("ADR-CT-5 call %d: expected tag, got nil", i+1)
+		}
+		if tag.Name != "v4.0.0" {
+			t.Errorf("ADR-CT-5 call %d: expected 'v4.0.0' (more dot components), got %q", i+1, tag.Name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// End of ADR-001 confirmation tests
+// ---------------------------------------------------------------------------
 
 // TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch is the regression test for the
 // DFS traversal bug. With DFS (the old default), traversal dives into parent[0] (main chain)
