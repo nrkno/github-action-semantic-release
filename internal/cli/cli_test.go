@@ -49,7 +49,7 @@ type mockGitClient struct {
 	commitsBetweenErr  error
 }
 
-func (m *mockGitClient) FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error) {
+func (m *mockGitClient) FindLatestTag(tagPrefix string) (*git.Tag, error) {
 	m.latestTagCalls++
 	if m.isShallowRepo {
 		return nil, git.ShallowRepoError{Message: "repository is a shallow clone"}

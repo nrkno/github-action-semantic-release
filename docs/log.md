@@ -3,10 +3,14 @@ type: Log
 title: semrel documentation log
 description: Dated change log for the semrel docs/ directory, recording every document creation and significant update.
 tags: [log, changelog, documentation]
-timestamp: 2026-08-12
+timestamp: 2026-08-19
 ---
 
 # Documentation log
+
+### 2026-08-19
+
+- **Update** `docs/architecture.md`: semver-max baseline detection (ADR-001). Renamed `FindLatestAnnotatedTag` → `FindLatestTag`; added Version baseline detection design decision subsection; corrected shallow-clone section (ShallowRepoError fires before FindLatestTag is called).
 
 ### 2026-08-12
 

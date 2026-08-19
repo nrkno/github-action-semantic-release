@@ -6,4 +6,4 @@ coverage.out
 *.out
 .DS_Store
 
-.opencode/reports/**
+docs/ephemeral-reports/**

@@ -81,7 +81,7 @@ type lazyGitClient struct {
 	err error
 }
 
-func (c *lazyGitClient) FindLatestAnnotatedTag(tagPrefix string) (*git.Tag, error) {
+func (c *lazyGitClient) FindLatestTag(tagPrefix string) (*git.Tag, error) {
 	return nil, c.err
 }
 
