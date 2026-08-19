@@ -533,43 +533,11 @@ type testGitClient struct {
 	commitsForRange []gitpkg.Commit
 }
 
-func (c *testGitClient) FindLatestAnnotatedTag(tagPrefix string) (*gitpkg.Tag, error) {
+func (c *testGitClient) FindLatestTag(tagPrefix string) (*gitpkg.Tag, error) {
 	if c.rawRepo == nil {
 		return nil, nil
 	}
-
-	tags, err := c.rawRepo.Tags()
-	if err != nil {
-		return nil, err
-	}
-
-	var latestTag *gitpkg.Tag
-	var latestTime time.Time
-
-	err = tags.ForEach(func(ref *plumbing.Reference) error {
-		// Only process annotated tags
-		obj, err := c.rawRepo.TagObject(ref.Hash())
-		if err != nil {
-			return nil
-		}
-
-		// Get the target commit to compare dates
-		commit, err := c.rawRepo.CommitObject(obj.Target)
-		if err != nil {
-			return nil
-		}
-
-		if latestTag == nil || commit.Author.When.After(latestTime) {
-			latestTime = commit.Author.When
-			latestTag = &gitpkg.Tag{
-				Name: ref.Name().Short(),
-				SHA:  obj.Hash.String(),
-			}
-		}
-		return nil
-	})
-
-	return latestTag, err
+	return gitpkg.NewFromRaw(c.rawRepo).FindLatestTag(tagPrefix)
 }
 
 func (c *testGitClient) ListCommitsSinceTag(tag *gitpkg.Tag) ([]gitpkg.Commit, error) {
