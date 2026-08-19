@@ -14,6 +14,8 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
+
+	internalSemver "github.com/nrkno/github-action-semantic-release/internal/semver"
 )
 
 // Commit represents a git commit
@@ -91,117 +93,104 @@ func OpenRepo(path string) (*Repository, error) {
 	return &Repository{raw: repo}, nil
 }
 
-// FindLatestAnnotatedTag finds the latest annotated tag in the repository.
-// If tagPrefix is non-empty, only tags with that prefix are considered.
-// If no annotated tags exist, falls back to the most recent lightweight tag
-// (for repos migrating from tools like codfish/semantic-release that create
-// lightweight tags). Returns nil, nil only when no matching tags of any kind exist.
-func (r *Repository) FindLatestAnnotatedTag(tagPrefix string) (*Tag, error) {
-	tags, err := r.raw.Tags()
+// FindLatestTag finds the tag with the highest semver value across all tags
+// (annotated and lightweight). If tagPrefix is non-empty, only tags with that
+// prefix are considered. Tags whose names do not parse as valid semver after
+// prefix stripping are silently skipped. Returns nil, nil when no parseable
+// semver tags exist (bootstrap case).
+func (r *Repository) FindLatestTag(tagPrefix string) (*Tag, error) {
+	iter, err := r.raw.Tags()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tags: %w", err)
 	}
 
-	var annotatedTags []*Tag
-	err = tags.ForEach(func(ref *plumbing.Reference) error {
-		// Only process annotated tags (tag objects), not lightweight tags
-		obj, err := r.raw.TagObject(ref.Hash())
-		if err != nil {
-			// Not an annotated tag (lightweight tag), skip
-			return nil
-		}
+	type candidate struct {
+		tag     *Tag
+		version internalSemver.Version
+	}
 
+	var candidates []candidate
+	err = iter.ForEach(func(ref *plumbing.Reference) error {
 		name := ref.Name().Short()
+		// Apply prefix filter first — skip tags that don't carry the prefix.
 		if tagPrefix != "" && !strings.HasPrefix(name, tagPrefix) {
 			return nil
 		}
 
-		// Get the target commit SHA
-		targetSHA := obj.Target.String()
-
-		tag := &Tag{
-			Name:        name,
-			SHA:         obj.Hash.String(),
-			targetSHA:   targetSHA,
-			IsAnnotated: true,
+		var tag *Tag
+		// Try annotated tag first.
+		if obj, aerr := r.raw.TagObject(ref.Hash()); aerr == nil {
+			tag = &Tag{
+				Name:        name,
+				SHA:         obj.Hash.String(),
+				targetSHA:   obj.Target.String(),
+				IsAnnotated: true,
+			}
+		} else {
+			// Lightweight tag — must resolve directly to a commit.
+			commit, cerr := r.raw.CommitObject(ref.Hash())
+			if cerr != nil {
+				// Neither annotated nor a direct commit pointer — skip silently.
+				return nil
+			}
+			tag = &Tag{
+				Name:        name,
+				SHA:         ref.Hash().String(),
+				targetSHA:   commit.Hash.String(),
+				IsAnnotated: false,
+			}
 		}
-		annotatedTags = append(annotatedTags, tag)
+
+		// Parse tag name through the internal semver package.
+		// Non-semver names are silently dropped per invariant 5.
+		ver, perr := internalSemver.ParseVersionFromTag(name, tagPrefix)
+		if perr != nil {
+			return nil
+		}
+
+		candidates = append(candidates, candidate{tag: tag, version: ver})
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to iterate tags: %w", err)
 	}
 
-	if len(annotatedTags) > 0 {
-		// Sort by target commit date (most recent first)
-		sort.Slice(annotatedTags, func(i, j int) bool {
-			commitI, errI := r.raw.CommitObject(plumbing.NewHash(annotatedTags[i].targetSHA))
-			commitJ, errJ := r.raw.CommitObject(plumbing.NewHash(annotatedTags[j].targetSHA))
-			if errI != nil || errJ != nil {
-				return false
-			}
-			return commitI.Author.When.After(commitJ.Author.When)
-		})
-		return annotatedTags[0], nil
+	if len(candidates) == 0 {
+		return nil, nil // bootstrap: no parseable semver tags
 	}
 
-	// No annotated tags found — fall back to lightweight tags.
-	// This handles repos migrating from tools (e.g. codfish/semantic-release)
-	// that create lightweight tags. The next release will create an annotated
-	// tag, migrating the repo forward automatically.
-	return r.findLatestLightweightTag(tagPrefix)
+	// Sort descending by semver value. sort.Slice is not stable, so both
+	// tiebreaker keys are applied in a single comparator to guarantee
+	// deterministic ordering when two tags parse to equal semver
+	// (e.g. v4.0 and v4.0.0 are equal under Masterminds/semver).
+	sort.Slice(candidates, func(i, j int) bool {
+		vi, vj := candidates[i].version, candidates[j].version
+		if vi.Major != vj.Major {
+			return vi.Major > vj.Major
+		}
+		if vi.Minor != vj.Minor {
+			return vi.Minor > vj.Minor
+		}
+		if vi.Patch != vj.Patch {
+			return vi.Patch > vj.Patch
+		}
+		// Semver equal — prefer the tag with more dot-separated components
+		// (v4.0.0 beats v4.0) then fall back to lexicographic descending.
+		di := strings.Count(candidates[i].tag.Name, ".")
+		dj := strings.Count(candidates[j].tag.Name, ".")
+		if di != dj {
+			return di > dj
+		}
+		return candidates[i].tag.Name > candidates[j].tag.Name
+	})
+
+	return candidates[0].tag, nil
 }
 
-// findLatestLightweightTag finds the most recent lightweight tag matching tagPrefix.
-// Used as fallback by FindLatestAnnotatedTag when no annotated tags exist.
-func (r *Repository) findLatestLightweightTag(tagPrefix string) (*Tag, error) {
-	iter, err := r.raw.Tags()
-	if err != nil {
-		return nil, fmt.Errorf("list tags: %w", err)
-	}
-
-	type tagWithTime struct {
-		tag  *Tag
-		when time.Time
-	}
-
-	var candidates []tagWithTime
-	err = iter.ForEach(func(ref *plumbing.Reference) error {
-		name := ref.Name().Short()
-		if tagPrefix != "" && !strings.HasPrefix(name, tagPrefix) {
-			return nil
-		}
-		// Skip annotated tags — they were already handled above
-		if _, err := r.raw.TagObject(ref.Hash()); err == nil {
-			return nil
-		}
-		// Must point directly to a commit
-		commit, err := r.raw.CommitObject(ref.Hash())
-		if err != nil {
-			return nil
-		}
-		candidates = append(candidates, tagWithTime{
-			tag: &Tag{
-				Name:        name,
-				SHA:         ref.Hash().String(),
-				targetSHA:   commit.Hash.String(),
-				IsAnnotated: false,
-			},
-			when: commit.Committer.When,
-		})
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(candidates) == 0 {
-		return nil, nil // genuinely no tags — real bootstrap
-	}
-
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].when.After(candidates[j].when)
-	})
-	return candidates[0].tag, nil
+// NewFromRaw wraps a *gogit.Repository for use in tests.
+// Not for production use.
+func NewFromRaw(r *gogit.Repository) *Repository {
+	return &Repository{raw: r}
 }
 
 // FindPreviousAnnotatedTag finds the annotated tag before the given tag.
