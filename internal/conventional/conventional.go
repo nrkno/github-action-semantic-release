@@ -289,11 +289,13 @@ var mergePattern = regexp.MustCompile(`(?i)^Merge [0-9a-f]+ into [0-9a-f]+`)
 //   - "Merge pull request …" (GitHub PR merge)
 //   - "Merge {sha} into {sha}" (GitHub Actions CI merge commit)
 //   - "Merge remote-tracking branch …"
+//   - "Merge refs/…"         (bulldozer / policy-bot branch updates)
 func IsMergeCommit(message string) bool {
 	trimmed := strings.TrimSpace(message)
 	return strings.HasPrefix(trimmed, "Merge branch") ||
 		strings.HasPrefix(trimmed, "Merge pull request") ||
 		strings.HasPrefix(trimmed, "Merge remote-tracking branch") ||
+		strings.HasPrefix(trimmed, "Merge refs/") ||
 		mergePattern.MatchString(trimmed)
 }
 
