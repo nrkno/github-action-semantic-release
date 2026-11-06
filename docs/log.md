@@ -3,10 +3,18 @@ type: Log
 title: semrel documentation log
 description: Dated change log for the semrel docs/ directory, recording every document creation and significant update.
 tags: [log, changelog, documentation]
-timestamp: 2026-08-19
+timestamp: 2026-11-06
 ---
 
 # Documentation log
+
+## 2026-11-06
+
+- **Update** `docs/architecture.md`: documented the Go 1.26 minimum and pinned vulnerability-scanner setup, consistent with CI and release builds.
+
+- **Update** `docs/architecture.md` and `docs/architecture/commit-ranges/`: documented ancestry-based PR/release ranges, direct HEAD lookup, preserved off-branch fallback, bounded-header parser regressions, object-read evidence, and production Git/CLI composition including timestamp-skew retry conflict coverage.
+- **Creation** `docs/architecture/commit-ranges/`: proposed commit-range decision and topic index; off-branch release baseline policy remains unresolved.
+- **Update** `docs/architecture/index.md` and `docs/architecture/log.md`: navigation and change record for the proposed decision.
 
 ### 2026-08-19
 

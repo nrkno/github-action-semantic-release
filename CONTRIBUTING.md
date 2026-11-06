@@ -52,7 +52,7 @@ BREAKING CHANGE: --force-tag removed; use --reuse-tag instead
 
 ### Prerequisites
 
-- Go 1.25+
+- Go 1.26+
 - Docker (optional, for container builds)
 - [golangci-lint](https://golangci-lint.run/usage/install/) (optional, for local lint)
 

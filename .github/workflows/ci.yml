@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
       - run: go vet ./...
       - run: go test ./... -count=1 -race -coverprofile=coverage.out
       - run: go test ./... -count=1 -tags=integration
@@ -31,6 +31,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.26'
       - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: v2.12.2
@@ -44,7 +47,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
       - run: go build -o semrel ./cmd/semrel
       - run: ./semrel lint
 
@@ -54,11 +57,6 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
-      - uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1.0.4
-        with:
-          go-version-input: '1.25'
-          go-package: ./...
-          repo-checkout: false   # job already checked out the repo; avoids a duplicate
-                                  # internal checkout that collides with our checkout's
-                                  # credential-persistence mechanism
+          go-version: '1.26'
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - run: govulncheck ./...

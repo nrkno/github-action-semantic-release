@@ -3,7 +3,7 @@ type: Architecture
 title: semrel architecture
 description: Why semrel exists, internal package structure, and key design decisions including go-git, the alpine container image, idempotency ladder, and shallow clone guard.
 tags: [architecture, supply-chain, go-git, alpine, cosign, idempotency]
-timestamp: 2026-08-19
+timestamp: 2026-11-06
 ---
 
 # Architecture
@@ -20,6 +20,9 @@ briefly published. NRK teams consuming that action were exposed.
 - Uses only `GITHUB_TOKEN` — no external secrets or service accounts
 - Is built from source in CI before use (no pinned third-party action required)
 - Publishes a cosign-signed container image for teams that prefer the container path
+
+The module and supported build environments require Go 1.26 or newer. CI pins the
+vulnerability scanner version so the scan runs consistently with that toolchain.
 
 ---
 
@@ -158,11 +161,19 @@ beats `v4.0`.
 
 ### SHA comparison
 
-The tag SHA check in rung 2 compares `tag.TargetSHA()` (the commit a annotated tag
-points to) against the HEAD commit SHA from `ListCommitsSinceTag(nil)`. A mismatch
-means a different commit was tagged with the same calculated version, which is a
+The tag SHA check in rung 2 compares `tag.TargetSHA()` (the commit an annotated tag
+points to) against the HEAD commit SHA from the direct `HeadSHA()` lookup, without
+enumerating history. A mismatch means a different commit was tagged with the same calculated version, which is a
 genuine conflict (exit 1). This guards against two parallel release runs computing
 the same next version for different commits.
+
+Commit range membership follows graph ancestry, not commit timestamps. PR lint excludes
+every commit reachable from its base before loading range commits. Release enumeration
+excludes the selected tag and its ancestors when the tag is reachable from HEAD. An
+unreachable selected tag preserves the existing all-HEAD-history fallback; tag selection
+remains highest-semver across tags. Tagless bootstrap also includes all HEAD history.
+Ancestry discovery may traverse full base history: this bounds full commit materialization,
+not all graph work or underlying object I/O.
 
 ### Shallow clone requirement
 

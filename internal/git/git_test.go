@@ -1,6 +1,7 @@
 package git
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,10 +12,50 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/storage"
 	"github.com/go-git/go-git/v5/storage/memory"
 
 	internalSemver "github.com/nrkno/github-action-semantic-release/internal/semver"
 )
+
+type readCountingStorer struct {
+	storage.Storer
+	readBytes map[plumbing.Hash]int64
+}
+
+func (s *readCountingStorer) EncodedObject(kind plumbing.ObjectType, hash plumbing.Hash) (plumbing.EncodedObject, error) {
+	obj, err := s.Storer.EncodedObject(kind, hash)
+	if err != nil {
+		return nil, err
+	}
+	return countingEncodedObject{EncodedObject: obj, hash: hash, owner: s}, nil
+}
+
+type countingEncodedObject struct {
+	plumbing.EncodedObject
+	hash  plumbing.Hash
+	owner *readCountingStorer
+}
+
+func (o countingEncodedObject) Reader() (io.ReadCloser, error) {
+	r, err := o.EncodedObject.Reader()
+	if err != nil {
+		return nil, err
+	}
+	return &countingReader{ReadCloser: r, hash: o.hash, owner: o.owner}, nil
+}
+
+type countingReader struct {
+	io.ReadCloser
+	hash  plumbing.Hash
+	owner *readCountingStorer
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	r.owner.readBytes[r.hash] += int64(n)
+	return n, err
+}
 
 // createInMemoryRepo creates an in-memory git repository for testing
 func createInMemoryRepo(t *testing.T) *gogit.Repository {
@@ -1209,13 +1250,13 @@ func TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch(t *testing.T) {
 
 	// C1: feature branch commit off C0 — stored in the object DB, HEAD not moved
 	featureMsg := "feat: add new feature"
-	c1Hash := createCommitOffParent(t, repo, featureMsg, now.Add(1*time.Second), c0.Hash)
+	c1Hash := createCommitOffParent(t, repo, featureMsg, now.Add(-24*time.Hour), c0.Hash)
 
 	// C2: main commit off C0 — HEAD is still at C0, so worktree parent = C0
 	c2 := createCommitWithTime(t, repo, "main.txt", "main work", "fix: main change", now.Add(2*time.Second))
 
 	// M: merge commit with parents [C2, C1] — HEAD advances to M
-	createMergeCommit(t, repo, "Merge feature into main", now.Add(3*time.Second), c2.Hash, c1Hash)
+	merge := createMergeCommit(t, repo, "Merge feature into main", now.Add(3*time.Second), c2.Hash, c1Hash)
 
 	r := &Repository{raw: repo}
 	tag := &Tag{
@@ -1230,12 +1271,25 @@ func TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch(t *testing.T) {
 	}
 
 	// Expected: M + C2 + C1 = 3 commits; C0 is excluded (it is the stop hash).
-	if len(commits) != 3 {
+	want := map[string]bool{merge.String(): true, c2.Hash.String(): true, c1Hash.String(): true}
+	got := make(map[string]bool)
+	for _, commit := range commits {
+		got[commit.SHA] = true
+	}
+	if len(commits) != 3 || len(got) != len(want) {
 		msgs := make([]string, len(commits))
 		for i, c := range commits {
 			msgs[i] = strings.TrimSpace(c.Message)
 		}
 		t.Fatalf("expected 3 commits (merge + main + feature), got %d: %v", len(commits), msgs)
+	}
+	for sha := range want {
+		if !got[sha] {
+			t.Errorf("missing range commit %s; got %v", sha, got)
+		}
+	}
+	if _, included := got[c0.Hash.String()]; included {
+		t.Errorf("base/tag ancestry commit %s leaked into range", c0.Hash)
 	}
 
 	// The feature branch commit MUST be present — this is the bug guard.
@@ -1253,4 +1307,154 @@ func TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch(t *testing.T) {
 		}
 		t.Errorf("feature branch commit %q not found in results; commits: %v", featureMsg, msgs)
 	}
+}
+
+func TestListCommitsSinceTag_OffBranchKeepsAllHeadHistory(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	now := time.Now()
+	base := createCommitWithTime(t, repo, "base", "base", "base", now)
+	other := createCommitWithTime(t, repo, "head", "head", "off branch", now.Add(time.Second))
+	selected := createCommitOffParent(t, repo, "selected tag", now.Add(2*time.Second), base.Hash)
+	tag := &Tag{Name: "v2.0.0", targetSHA: selected.String()}
+	r := &Repository{raw: repo}
+	commits, err := r.ListCommitsSinceTag(tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, c := range commits {
+		got[c.SHA] = true
+	}
+	if len(got) != 2 || !got[base.Hash.String()] || !got[other.Hash.String()] {
+		t.Fatalf("off-branch fallback should preserve all HEAD history, got %v", got)
+	}
+}
+
+func TestHeadSHA(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	head := createCommit(t, repo, "file", "x", "head")
+	r := &Repository{raw: repo}
+	got, err := r.HeadSHA()
+	if err != nil || got != head.Hash.String() {
+		t.Fatalf("HeadSHA() = %q, %v; want %q", got, err, head.Hash)
+	}
+}
+
+func TestCommitRangesReadOnlyHeadersForExcludedHistory(t *testing.T) {
+	for _, mode := range []string{"pull-request", "tagged-release"} {
+		t.Run(mode, func(t *testing.T) {
+			repo := createInMemoryRepo(t)
+			now := time.Now()
+			base := createCommitWithTime(t, repo, "base", "base", "base\n"+strings.Repeat("historical body ", 2048), now)
+			baseRef := plumbing.NewHashReference("refs/heads/base", base.Hash)
+			if err := repo.Storer.SetReference(baseRef); err != nil {
+				t.Fatal(err)
+			}
+			head := createCommitWithTime(t, repo, "range", "range", "feat: in range\n"+strings.Repeat("range body ", 32), now.Add(time.Second))
+			counter := &readCountingStorer{Storer: repo.Storer, readBytes: make(map[plumbing.Hash]int64)}
+			repo.Storer = counter
+			productionRepo := &Repository{raw: repo}
+			var commits []Commit
+			var err error
+			if mode == "pull-request" {
+				commits, err = productionRepo.ListCommitsSinceRef("base")
+			} else {
+				commits, err = productionRepo.ListCommitsSinceTag(NewTag("v1.0.0", base.Hash.String(), base.Hash.String()))
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(commits) != 1 || commits[0].SHA != head.Hash.String() {
+				t.Fatalf("range = %#v, want only %s", commits, head.Hash)
+			}
+			baseSize, err := repo.Storer.EncodedObjectSize(base.Hash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := counter.readBytes[base.Hash]; got == 0 || got > 4096 || got >= baseSize {
+				t.Fatalf("excluded historical commit read %d bytes (object size %d); want only the bounded header read, not its body", got, baseSize)
+			}
+			headSize, err := repo.Storer.EncodedObjectSize(head.Hash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := counter.readBytes[head.Hash]; got < headSize {
+				t.Fatalf("range commit read %d bytes (object size %d); expected full commit materialization", got, headSize)
+			}
+		})
+	}
+}
+
+func TestCommitParentsBoundsAndMatchesGoGitHeaderParsing(t *testing.T) {
+	t.Run("large author payload remains unread", func(t *testing.T) {
+		repo := createInMemoryRepo(t)
+		seed := createCommitWithTime(t, repo, "seed", "seed", "seed", time.Now())
+		data := "tree " + seed.TreeHash.String() + "\nauthor " + strings.Repeat("A", 32*1024) + " <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\nbase\n"
+		base := storeRawCommit(t, repo, data)
+		if _, err := repo.CommitObject(base); err != nil {
+			t.Fatalf("go-git should accept fixture: %v", err)
+		}
+		if err := repo.Storer.SetReference(plumbing.NewHashReference("refs/heads/base", base)); err != nil {
+			t.Fatal(err)
+		}
+		child := createCommitOffParent(t, repo, "feat: child", time.Now(), base)
+		if err := repo.Storer.SetReference(plumbing.NewHashReference("refs/heads/master", child)); err != nil {
+			t.Fatal(err)
+		}
+		counter := &readCountingStorer{Storer: repo.Storer, readBytes: make(map[plumbing.Hash]int64)}
+		repo.Storer = counter
+		commits, err := (&Repository{raw: repo}).ListCommitsSinceRef("base")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(commits) != 1 || commits[0].SHA != child.String() {
+			t.Fatalf("range commits = %#v", commits)
+		}
+		if got := counter.readBytes[base]; got == 0 || got > 4096 {
+			t.Fatalf("large author payload caused %d bytes read from excluded object", got)
+		}
+	})
+
+	t.Run("uppercase tree hash accepted by go-git", func(t *testing.T) {
+		repo := createInMemoryRepo(t)
+		seed := createCommitWithTime(t, repo, "seed", "seed", "seed", time.Now())
+		base := storeRawCommit(t, repo, "tree "+strings.ToUpper(seed.TreeHash.String())+"\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\nbase\n")
+		if _, err := repo.CommitObject(base); err != nil {
+			t.Fatalf("go-git rejects uppercase tree hash fixture: %v", err)
+		}
+		parents, err := (&Repository{raw: repo}).commitParents(base)
+		if err != nil || len(parents) != 0 {
+			t.Fatalf("commitParents() = %v, %v", parents, err)
+		}
+	})
+
+	t.Run("parent without hash is malformed", func(t *testing.T) {
+		repo := createInMemoryRepo(t)
+		seed := createCommitWithTime(t, repo, "seed", "seed", "seed", time.Now())
+		base := storeRawCommit(t, repo, "tree "+seed.TreeHash.String()+"\nparent\nauthor Test <test@example.com> 1700000000 +0000\ncommitter Test <test@example.com> 1700000000 +0000\n\nbase\n")
+		if _, err := (&Repository{raw: repo}).commitParents(base); err == nil {
+			t.Fatal("parent header without object ID was accepted")
+		}
+	})
+}
+
+func storeRawCommit(t *testing.T, repo *gogit.Repository, data string) plumbing.Hash {
+	t.Helper()
+	obj := repo.Storer.NewEncodedObject()
+	obj.SetType(plumbing.CommitObject)
+	w, err := obj.Writer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(w, data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hash
 }

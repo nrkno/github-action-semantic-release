@@ -97,6 +97,8 @@ func (c *lazyGitClient) ListCommitsSinceTag(tag *git.Tag) ([]git.Commit, error) 
 	return nil, c.err
 }
 
+func (c *lazyGitClient) HeadSHA() (string, error) { return "", c.err }
+
 func (c *lazyGitClient) ListCommitsSinceRef(refName string) ([]git.Commit, error) {
 	return nil, c.err
 }
