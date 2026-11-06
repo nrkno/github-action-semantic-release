@@ -6,8 +6,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/nrkno/github-action-semantic-release/internal/conventional"
 	"github.com/nrkno/github-action-semantic-release/internal/git"
 	"github.com/nrkno/github-action-semantic-release/internal/github"
@@ -27,26 +32,41 @@ func newTestTag(name, sha string) *git.Tag {
 }
 
 type mockGitClient struct {
-	latestTag          *git.Tag
-	latestTagErr       error
-	latestTagCalls     int
-	findTagByNameTag   *git.Tag
-	findTagByNameErr   error
-	commits            []git.Commit
-	commitsErr         error
+	latestTag            *git.Tag
+	latestTagErr         error
+	latestTagCalls       int
+	findTagByNameTag     *git.Tag
+	findTagByNameErr     error
+	commits              []git.Commit
+	commitsErr           error
 	commitsSinceTagCalls int
-	commitsSinceRef    []git.Commit
-	commitsSinceRefErr error
-	sinceRefArg        string
-	createdTag         *git.Tag
-	createTagErr       error
-	pushedTag          string
-	pushTagErr         error
-	isShallowRepo      bool
-	previousTag        *git.Tag
-	previousTagErr     error
-	commitsBetween     []git.Commit
-	commitsBetweenErr  error
+	commitsSinceRef      []git.Commit
+	commitsSinceRefErr   error
+	sinceRefArg          string
+	createdTag           *git.Tag
+	createTagErr         error
+	pushedTag            string
+	pushTagErr           error
+	isShallowRepo        bool
+	previousTag          *git.Tag
+	previousTagErr       error
+	commitsBetween       []git.Commit
+	commitsBetweenErr    error
+	headSHA              string
+	headSHAErr           error
+	headSHACalls         int
+}
+
+type repositoryHeadGitClient struct {
+	*mockGitClient
+	repo *git.Repository
+}
+
+func (c *repositoryHeadGitClient) HeadSHA() (string, error) { return c.repo.HeadSHA() }
+
+func (m *mockGitClient) HeadSHA() (string, error) {
+	m.headSHACalls++
+	return m.headSHA, m.headSHAErr
 }
 
 func (m *mockGitClient) FindLatestTag(tagPrefix string) (*git.Tag, error) {
@@ -149,6 +169,194 @@ func (m *mockGitHubClient) FindPRComment(ctx context.Context, owner, repo string
 }
 
 // Tests
+
+func TestLintPullRequestWithProductionGitRepository(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(file, message string) plumbing.Hash {
+		t.Helper()
+		f, err := wt.Filesystem.Create(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(message)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Add(file); err != nil {
+			t.Fatal(err)
+		}
+		hash, err := wt.Commit(message, &gogit.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hash
+	}
+	base := commit("base.txt", "not a conventional commit")
+	if err := repo.Storer.SetReference(plumbing.NewHashReference("refs/heads/base", base)); err != nil {
+		t.Fatal(err)
+	}
+	commit("feature.txt", "feat: valid PR commit")
+
+	productionRepo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
+	t.Setenv("GITHUB_BASE_REF", "base")
+	t.Setenv("INPUT_WORKING_DIRECTORY", dir)
+	cmd := cmdLint(productionRepo, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("production Git + PR lint composition: %v", err)
+	}
+	// An invalid PR commit must still fail, while the invalid base commit above
+	// remains excluded from both runs.
+	commit("invalid.txt", "not conventional either")
+	productionRepo, err = git.OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd = cmdLint(productionRepo, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	cmd.SetArgs(nil)
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "commit violation") {
+		t.Fatalf("invalid PR commit should be rejected by production composition, got %v", err)
+	}
+}
+
+func TestReleaseWithProductionGitRepository(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(file, message string) plumbing.Hash {
+		t.Helper()
+		f, err := wt.Filesystem.Create(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(message)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Add(file); err != nil {
+			t.Fatal(err)
+		}
+		hash, err := wt.Commit(message, &gogit.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.com", When: time.Now()}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hash
+	}
+	commit("historical.txt", "feat!: historical breaking change")
+	base := commit("base.txt", "chore: release baseline")
+	if err := repo.Storer.SetReference(plumbing.NewHashReference("refs/tags/v1.0.0", base)); err != nil {
+		t.Fatal(err)
+	}
+	commit("feature.txt", "feat: production range feature")
+	productionRepo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.CreateTemp(t.TempDir(), "github-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "master")
+	t.Setenv("GITHUB_OUTPUT", output.Name())
+	t.Setenv("INPUT_WORKING_DIRECTORY", dir)
+	cmd := cmdRelease(productionRepo, &mockGitHubClient{releaseByTagErr: github.ErrNotFound}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	cmd.SetArgs([]string{"--dry-run"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("production Git + release composition: %v", err)
+	}
+	data, err := os.ReadFile(output.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	require.Contains(t, string(data), "version=1.1.0", "the production release path must enumerate the post-tag feat commit")
+}
+
+func TestReleaseRetryConflictUsesRealHeadDespiteTimestampSkew(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCommit := func(name, message string, when time.Time) plumbing.Hash {
+		t.Helper()
+		f, err := wt.Filesystem.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write([]byte(message)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := wt.Add(name); err != nil {
+			t.Fatal(err)
+		}
+		hash, err := wt.Commit(message, &gogit.CommitOptions{Author: &object.Signature{Name: "Test", Email: "test@example.com", When: when}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hash
+	}
+	future := time.Now().Add(24 * time.Hour)
+	base := writeCommit("base", "chore: base", future)
+	head := writeCommit("head", "feat: head", future.Add(-48*time.Hour))
+	productionRepo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualHead, err := productionRepo.HeadSHA()
+	if err != nil || actualHead != head.String() {
+		t.Fatalf("real HeadSHA = %q, %v; want %s", actualHead, err, head)
+	}
+	if actualHead == base.String() {
+		t.Fatal("fixture must make HEAD differ from the newer-timestamp ancestor")
+	}
+	mock := &mockGitClient{
+		latestTag:        newTestTag("v0.0.1", base.String()),
+		commits:          []git.Commit{{SHA: head.String(), ShortSHA: head.String()[:7], Message: "feat: head"}},
+		findTagByNameTag: git.NewTag("v0.0.2", "tag-object", base.String()),
+	}
+	client := &repositoryHeadGitClient{mockGitClient: mock, repo: productionRepo}
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_REF_NAME", "master")
+	cmd := cmdRelease(client, &mockGitHubClient{releaseByTagErr: github.ErrNotFound}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	cmd.SetArgs([]string{"--dry-run"})
+	err = cmd.ExecuteContext(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "different commit") {
+		t.Fatalf("retry with conflicting tag should fail against real HEAD SHA, got %v", err)
+	}
+}
 
 func TestLintValidCommits(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -779,6 +987,7 @@ func TestReleaseRung2TagExistsAtHead(t *testing.T) {
 	// Simulate: latestTag is v0.0.1, HEAD has one new feat commit → next version is v0.0.2.
 	// FindTagByName("v0.0.2") returns a tag pointing at headSHA (previous interrupted run).
 	gitClient := &mockGitClient{
+		headSHA:   headSHA,
 		latestTag: newTestTag("v0.0.1", "oldsha1"),
 		commits: []git.Commit{
 			{
@@ -802,6 +1011,9 @@ func TestReleaseRung2TagExistsAtHead(t *testing.T) {
 	err := cmd.ExecuteContext(context.Background())
 	if err != nil {
 		t.Errorf("Rung 2 retry path should not error, got: %v", err)
+	}
+	if gitClient.headSHACalls != 1 || gitClient.commitsSinceTagCalls != 1 {
+		t.Errorf("retry must use direct HEAD lookup (calls=%d), not commit history (calls=%d)", gitClient.headSHACalls, gitClient.commitsSinceTagCalls)
 	}
 }
 

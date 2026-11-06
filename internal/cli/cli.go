@@ -22,6 +22,7 @@ import (
 
 // Interface injection for testing
 type GitClient interface {
+	HeadSHA() (string, error)
 	FindLatestTag(tagPrefix string) (*git.Tag, error)
 	FindTagByName(name string) (*git.Tag, error)
 	FindPreviousAnnotatedTag(current *git.Tag) (*git.Tag, error)
@@ -118,24 +119,24 @@ func cmdLint(gitClient GitClient, logger *slog.Logger) *cobra.Command {
 					commits = commitsFromPushPayload(ghEnv.PushCommits)
 					commitsResolved = true
 				} else {
+					if fromRef == "" {
+						tag, err := gitClient.FindLatestTag(cfg.TagPrefix)
+						if err != nil {
+							logger.Error("failed to find latest tag", "error", err)
+							return err
+						}
+						if tag != nil {
+							fromRef = tag.Name
+						}
+					}
+					if toRef == "" {
+						toRef = "HEAD"
+					}
+				}
+			case "release":
+				// Release context: previous tag → HEAD
 				if fromRef == "" {
 					tag, err := gitClient.FindLatestTag(cfg.TagPrefix)
-					if err != nil {
-						logger.Error("failed to find latest tag", "error", err)
-						return err
-					}
-					if tag != nil {
-						fromRef = tag.Name
-					}
-				}
-				if toRef == "" {
-					toRef = "HEAD"
-				}
-			}
-		case "release":
-			// Release context: previous tag → HEAD
-			if fromRef == "" {
-				tag, err := gitClient.FindLatestTag(cfg.TagPrefix)
 					if err != nil {
 						logger.Error("failed to find latest tag", "error", err)
 						return err
@@ -283,17 +284,17 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			}
 			owner, repo := parts[0], parts[1]
 
-		// Step 4: Find latest tag using configured prefix
-		t0 := time.Now()
-		latestTag, err := gitClient.FindLatestTag(cfg.TagPrefix)
-		if err != nil {
-			logger.Error("failed to find latest tag", "error", err)
-			return err
-		}
-		logger.Debug("FindLatestTag",
-			"duration_ms", time.Since(t0).Milliseconds(),
-			"found", latestTag != nil,
-		)
+			// Step 4: Find latest tag using configured prefix
+			t0 := time.Now()
+			latestTag, err := gitClient.FindLatestTag(cfg.TagPrefix)
+			if err != nil {
+				logger.Error("failed to find latest tag", "error", err)
+				return err
+			}
+			logger.Debug("FindLatestTag",
+				"duration_ms", time.Since(t0).Milliseconds(),
+				"found", latestTag != nil,
+			)
 			if latestTag != nil && !latestTag.IsAnnotated {
 				logger.Warn("latest tag is a lightweight tag — semrel works best with annotated tags. "+
 					"The next release will create an annotated tag going forward. "+
@@ -463,11 +464,10 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			}
 			if existingVersionTag != nil {
 				// The next-version tag already exists — check it points to HEAD
-				headCommits, err := gitClient.ListCommitsSinceTag(nil)
-				if err != nil || len(headCommits) == 0 {
+				headSHA, err := gitClient.HeadSHA()
+				if err != nil || headSHA == "" {
 					return fmt.Errorf("could not determine HEAD SHA")
 				}
-				headSHA := headCommits[0].SHA
 				if existingVersionTag.TargetSHA() != headSHA {
 					// Tag points to a different commit — genuine conflict
 					return fmt.Errorf("tag %s exists but points to different commit: %s vs %s",
@@ -757,8 +757,8 @@ func cmdNotes(gitClient GitClient, githubClient GitHubClient, logger *slog.Logge
 			}
 			owner, repo := parts[0], parts[1]
 
-		// Find latest tag using configured prefix
-		latestTag, err := gitClient.FindLatestTag(notesCfgResolved.TagPrefix)
+			// Find latest tag using configured prefix
+			latestTag, err := gitClient.FindLatestTag(notesCfgResolved.TagPrefix)
 			if err != nil {
 				logger.Error("failed to find latest tag", "error", err)
 				return err

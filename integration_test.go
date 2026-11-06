@@ -23,9 +23,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/nrkno/github-action-semantic-release/internal/cli"
 	gitpkg "github.com/nrkno/github-action-semantic-release/internal/git"
 	githubpkg "github.com/nrkno/github-action-semantic-release/internal/github"
-	"github.com/nrkno/github-action-semantic-release/internal/cli"
 )
 
 // setupInMemoryRepo creates an in-memory git repository with initial commits.
@@ -528,8 +528,8 @@ func TestE2EFullWorkflow(t *testing.T) {
 
 // testGitClient implements cli.GitClient for testing
 type testGitClient struct {
-	rawRepo        *git.Repository
-	tagsByName     map[string]*gitpkg.Tag
+	rawRepo         *git.Repository
+	tagsByName      map[string]*gitpkg.Tag
 	commitsForRange []gitpkg.Commit
 }
 
@@ -579,6 +579,8 @@ func (c *testGitClient) ListCommitsSinceTag(tag *gitpkg.Tag) ([]gitpkg.Commit, e
 	})
 	return commits, err
 }
+
+func (c *testGitClient) HeadSHA() (string, error) { return "test-head-sha", nil }
 
 // ListCommitsSinceRef returns commits reachable from HEAD but not from refName
 // (base..HEAD semantics), mirroring internal/git.Repository.
@@ -698,10 +700,10 @@ func (c *testGitClient) ListCommitsBetweenTags(from, to *gitpkg.Tag) ([]gitpkg.C
 
 // testGitHubClient implements cli.GitHubClient for testing
 type testGitHubClient struct {
-	releaseExists   bool
-	commentExists   bool
-	commentPosted   bool
-	prsForCommit    []githubpkg.PR
+	releaseExists bool
+	commentExists bool
+	commentPosted bool
+	prsForCommit  []githubpkg.PR
 }
 
 func (c *testGitHubClient) GetReleaseByTag(ctx context.Context, owner, repo, tag string) (*githubpkg.Release, error) {
