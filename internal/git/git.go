@@ -3,6 +3,7 @@ package git
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -300,7 +301,7 @@ func (r *Repository) HeadSHA() (string, error) {
 }
 
 // commitParents reads only the tree and contiguous parent headers from a commit object.
-func (r *Repository) commitParents(hash plumbing.Hash) ([]plumbing.Hash, error) {
+func (r *Repository) commitParents(hash plumbing.Hash) (_ []plumbing.Hash, returnErr error) {
 	obj, err := r.raw.Storer.EncodedObject(plumbing.CommitObject, hash)
 	if err != nil {
 		return nil, err
@@ -309,7 +310,11 @@ func (r *Repository) commitParents(hash plumbing.Hash) ([]plumbing.Hash, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() {
+		if err := reader.Close(); err != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("failed to close commit object reader: %w", err))
+		}
+	}()
 	// Keep read-ahead small: the parser stops at the parent block, though the buffer
 	// may prefetch a bounded prefix beyond that point.
 	s := bufio.NewReaderSize(reader, 128)

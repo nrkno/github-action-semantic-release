@@ -21,6 +21,9 @@ briefly published. NRK teams consuming that action were exposed.
 - Is built from source in CI before use (no pinned third-party action required)
 - Publishes a cosign-signed container image for teams that prefer the container path
 
+The module and supported build environments require Go 1.26 or newer. CI pins the
+vulnerability scanner version so the scan runs consistently with that toolchain.
+
 ---
 
 ## Package structure
