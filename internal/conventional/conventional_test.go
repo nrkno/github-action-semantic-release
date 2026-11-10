@@ -647,6 +647,16 @@ func TestIsMergeCommit(t *testing.T) {
 			message: "Merge remote-tracking branch 'origin/main'",
 			want:    true,
 		},
+		{
+			name:    "bulldozer merge refs/heads into branch",
+			message: "Merge refs/heads/main into renovate/ghcr.io-actions-actions-runner-2.x",
+			want:    true,
+		},
+		{
+			name:    "bulldozer merge refs/heads with newline",
+			message: "Merge refs/heads/main into renovate/ghcr.io-actions-actions-runner-2.x\n",
+			want:    true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -684,6 +694,13 @@ func TestValidateAll_MergeCommitsSkipped(t *testing.T) {
 			commits: []RawCommit{
 				{SHA: "abc1234567890def", Message: "Merge branch feature"},
 				{SHA: "def1234567890abc", Message: "feat: add"},
+			},
+			wantLen: 0,
+		},
+		{
+			name: "bulldozer refs/heads merge is skipped",
+			commits: []RawCommit{
+				{SHA: "abc1234567890def", Message: "Merge refs/heads/main into renovate/ghcr.io-actions-actions-runner-2.x"},
 			},
 			wantLen: 0,
 		},
