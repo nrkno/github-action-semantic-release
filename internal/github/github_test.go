@@ -730,3 +730,20 @@ func TestIsAlreadyExists(t *testing.T) {
 		})
 	}
 }
+
+func TestClient_NetworkErrorDoesNotPanic(t *testing.T) {
+	c, err := NewClient("tok", "http://127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := c.GetReleaseByTag(ctx, "o", "r", "v1"); err == nil {
+		t.Error("GetReleaseByTag: want error")
+	}
+	if _, err := c.ListPRsForCommit(ctx, "o", "r", "abc"); err == nil {
+		t.Error("ListPRsForCommit: want error")
+	}
+	if err := c.PostPRComment(ctx, "o", "r", 1, "x"); err == nil {
+		t.Error("PostPRComment: want error")
+	}
+}

@@ -82,7 +82,7 @@ func NewClient(token, baseURL string) (*Client, error) {
 func (c *Client) GetReleaseByTag(ctx context.Context, owner, repo, tag string) (*Release, error) {
 	rel, resp, err := c.client.Repositories.GetReleaseByTag(ctx, owner, repo, tag)
 	if err != nil {
-		return nil, mapHTTPError(resp.Response, err)
+		return nil, mapHTTPError(rawResponse(resp), err)
 	}
 
 	return &Release{
@@ -112,7 +112,7 @@ func (c *Client) CreateRelease(ctx context.Context, owner, repo string, opts Cre
 				return c.GetReleaseByTag(ctx, owner, repo, opts.TagName)
 			}
 		}
-		return nil, mapHTTPError(resp.Response, err)
+		return nil, mapHTTPError(rawResponse(resp), err)
 	}
 
 	return &Release{
@@ -133,7 +133,7 @@ func (c *Client) ListPRsForCommit(ctx context.Context, owner, repo, sha string) 
 	for {
 		prs, resp, err := c.client.PullRequests.ListPullRequestsWithCommit(ctx, owner, repo, sha, opts)
 		if err != nil {
-			return nil, mapHTTPError(resp.Response, err)
+			return nil, mapHTTPError(rawResponse(resp), err)
 		}
 
 		for _, pr := range prs {
@@ -165,7 +165,7 @@ func (c *Client) SearchPRsForCommit(ctx context.Context, query string) ([]PR, er
 	for {
 		searchResult, resp, err := c.client.Search.Issues(ctx, query, opts)
 		if err != nil {
-			return nil, mapHTTPError(resp.Response, err)
+			return nil, mapHTTPError(rawResponse(resp), err)
 		}
 
 		for _, issue := range searchResult.Issues {
@@ -192,7 +192,7 @@ func (c *Client) PostPRComment(ctx context.Context, owner, repo string, prNumber
 		Body: body,
 	})
 	if err != nil {
-		return mapHTTPError(resp.Response, err)
+		return mapHTTPError(rawResponse(resp), err)
 	}
 	return nil
 }
@@ -208,7 +208,7 @@ func (c *Client) FindPRComment(ctx context.Context, owner, repo string, prNumber
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, prNumber, opts)
 		if err != nil {
-			return false, mapHTTPError(resp.Response, err)
+			return false, mapHTTPError(rawResponse(resp), err)
 		}
 
 		for _, comment := range comments {
@@ -329,4 +329,13 @@ func isAlreadyExists(resp *http.Response) bool {
 	}
 
 	return false
+}
+
+// rawResponse returns the underlying *http.Response, or nil when the request
+// failed before a response arrived (go-github then returns a nil *Response).
+func rawResponse(resp *gogithub.Response) *http.Response {
+	if resp == nil {
+		return nil
+	}
+	return resp.Response
 }
