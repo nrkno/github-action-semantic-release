@@ -10,6 +10,11 @@ name: Release
 #   release -> commit the digest into action.yml, tag that commit, create the
 #              GitHub release
 #
+# The tagged commit is a child of the released main commit (github.sha) and is
+# on no branch. semrel's ancestry-difference range rule (docs/architecture/
+# release-image-pinning/decisions/adr-001-*.md) is what makes that safe: later
+# pushes to main count only commits not reachable from the tag.
+#
 # The cosign identity checked by action.yml is THIS workflow on refs/heads/main.
 # Do not rename this file or move the image job without updating action.yml.
 
@@ -52,12 +57,20 @@ jobs:
       - id: decide
         env:
           TAG: ${{ steps.semrel.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [[ ! "$TAG" =~ ^[A-Za-z0-9._/-]*v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::Unexpected tag from semrel: $TAG"
             exit 1
           fi
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            # A tag without a GitHub release means an earlier run was interrupted
+            # after pushing the tag. Do not report "nothing to do".
+            if ! gh release view "$TAG" >/dev/null; then
+              echo "::error::Tag $TAG exists but its GitHub release could not be read. If the release was never created, create it for the existing tag (gh release create $TAG --verify-tag --generate-notes) and re-run. Do not move or delete the tag: it points at the commit that carries the signed image digest."
+              exit 1
+            fi
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "No release needed ($TAG already exists)"
           else
@@ -160,6 +173,12 @@ jobs:
             echo "::error::Failed to pin the image digest in action.yml"
             exit 1
           fi
+          # Fixed dates make the commit a pure function of (github.sha, digest):
+          # re-running this job with the same image output recreates the already
+          # tagged commit instead of a new one.
+          GIT_AUTHOR_DATE="$(git show -s --format=%cI "$GITHUB_SHA")"
+          GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+          export GIT_AUTHOR_DATE GIT_COMMITTER_DATE
           git -c user.name="github-actions[bot]" \
               -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
               commit -m "chore(release): pin image digest for ${TAG}" action.yml
@@ -174,9 +193,36 @@ jobs:
           EXPECTED: ${{ needs.plan.outputs.tag }}
           ACTUAL: ${{ steps.semrel.outputs.tag }}
           RELEASED: ${{ steps.semrel.outputs.released }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          if [[ ! "$EXPECTED" =~ ^[A-Za-z0-9._/-]*v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected tag from plan: $EXPECTED"
+            exit 1
+          fi
           if [ "$RELEASED" != "true" ] || [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "::error::semrel released '$ACTUAL' (released=$RELEASED), expected '$EXPECTED'"
+            # Rerun of an interrupted release: accepted only if the tag already
+            # sits on the commit this job just rebuilt AND its release exists.
+            tag_commit="$(git rev-parse -q --verify "refs/tags/${EXPECTED}^{commit}" || true)"
+            if [ -z "$tag_commit" ] || [ "$tag_commit" != "$(git rev-parse HEAD)" ]; then
+              echo "::error::semrel released '$ACTUAL' (released=$RELEASED), expected '$EXPECTED'"
+              exit 1
+            fi
+            if ! gh release view "$EXPECTED" >/dev/null; then
+              echo "::error::Tag $EXPECTED already points at this commit but has no GitHub release. Create it (gh release create $EXPECTED --verify-tag --generate-notes)."
+              exit 1
+            fi
+          fi
+          T="$(git rev-parse "refs/tags/${EXPECTED}^{commit}")"
+          # The tag must be a direct, single-parent child of the released main commit.
+          if [ "$(git rev-list --parents -n 1 "$T")" != "$T $GITHUB_SHA" ]; then
+            echo "::error::Tag $EXPECTED commit $T is not a direct child of $GITHUB_SHA"
+            exit 1
+          fi
+          # The tagged action.yml must carry exactly the signed digest from this run.
+          if [ "$(git show "$T:action.yml" | grep -cF "@${DIGEST}" || true)" != 1 ]; then
+            echo "::error::action.yml at $T does not contain @${DIGEST} exactly once"
             exit 1
           fi
 
