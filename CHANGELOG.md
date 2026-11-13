@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Release workflow: the container image is built and signed before the tag exists, and the tagged commit carries the image digest in `action.yml`, so a commit-SHA pin selects exactly one signed image. The tagged commit is a child of the released `main` commit and is on no branch (GitHub shows a "does not belong to any branch" banner). The image `COMMIT` label is the `main` commit. The release job asserts the tag's commit is a direct child of the released commit and contains the digest exactly once.
+
+### Changed
+
+- `release` and `notify` now count the commits reachable from `HEAD` and not reachable from the baseline tag, whether or not the tag is an ancestor of `HEAD`. Previously a baseline tag that was not an ancestor of `HEAD` made every release count the full history. Tags with unrelated history behave as before. Releasing from several long-lived branches is not supported: commits released under a non-baseline tag are counted again.
+
 ### Fixed
 
 - `lint` on `push` events now validates the pushed commits from the GitHub event payload (`GITHUB_EVENT_PATH`) when available, preventing tagless repositories from linting their entire commit history on every branch push. Falls back to previous tag-based behaviour when the payload is unavailable. Explicit `--from-ref` overrides automatic detection.

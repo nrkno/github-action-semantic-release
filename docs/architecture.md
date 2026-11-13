@@ -165,9 +165,15 @@ the same next version for different commits.
 
 Commit range membership follows graph ancestry, not commit timestamps. PR lint excludes
 every commit reachable from its base before loading range commits. Release enumeration
-excludes the selected tag and its ancestors when the tag is reachable from HEAD. An
-unreachable selected tag preserves the existing all-HEAD-history fallback; tag selection
-remains highest-semver across tags. Tagless bootstrap also includes all HEAD history.
+is "reachable from HEAD and not reachable from the selected tag's commit", whether or not
+the tag is an ancestor of HEAD. The release tag points at an off-branch digest commit, so
+only the commits since the history it was built on are counted; a tag with unrelated
+history excludes nothing. `notify` uses the same rule between the previous and released
+tag (`ListCommitsBetweenTags`). Tag selection remains highest-semver across tags, and
+releasing from several long-lived branches is not supported (commits released under a
+non-baseline tag are counted again). `notify` picks the previous tag by the author date of
+tag targets, a known limitation. Tagless bootstrap includes all HEAD history.
+See [release-image-pinning ADR-001](/docs/architecture/release-image-pinning/decisions/adr-001-off-branch-digest-tag-with-ancestry-ranges.md).
 Ancestry discovery may traverse full base history: this bounds full commit materialization,
 not all graph work or underlying object I/O.
 
@@ -199,7 +205,13 @@ push to main
 ```
 
 The release tag therefore points at a commit that is a child of the `main`
-commit but is not on any branch. A commit SHA pin of that commit pins the image.
+commit but is not on any branch (GitHub shows a "does not belong to any branch" banner
+on it). The digest commit uses the `main` commit's date for author and committer, so a rerun
+with the same image recreates the same commit. After tagging, the check step asserts that
+the tag's commit is a direct child of `github.sha` and contains the signed digest exactly
+once. A commit SHA pin of that commit pins the image. The image's `COMMIT` build argument and
+`org.opencontainers.image.revision` label are the `main` commit (the parent), not the tagged
+digest commit.
 `action.yml` on `main` holds an all-zero placeholder digest; using an unreleased
 commit fails with a clear error.
 

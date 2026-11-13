@@ -1705,3 +1705,171 @@ func TestDryRun_NoWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(content), "released=false")
 }
+
+// offBranchRepo is a real on-disk repository that models the release workflow:
+// the branch holds ordinary commits, and each release tag points at a "digest"
+// commit that is a child of the released branch commit but is on no branch.
+type offBranchRepo struct {
+	t    *testing.T
+	dir  string
+	repo *gogit.Repository
+	wt   *gogit.Worktree
+}
+
+func newOffBranchRepo(t *testing.T) *offBranchRepo {
+	t.Helper()
+	dir := t.TempDir()
+	repo, err := gogit.PlainInit(dir, false)
+	require.NoError(t, err)
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	return &offBranchRepo{t: t, dir: dir, repo: repo, wt: wt}
+}
+
+// onBranch commits to the checked-out branch with an explicit, distinct date.
+func (r *offBranchRepo) onBranch(file, message string, when time.Time) plumbing.Hash {
+	r.t.Helper()
+	f, err := r.wt.Filesystem.Create(file)
+	require.NoError(r.t, err)
+	_, err = f.Write([]byte(message))
+	require.NoError(r.t, err)
+	require.NoError(r.t, f.Close())
+	_, err = r.wt.Add(file)
+	require.NoError(r.t, err)
+	sig := &object.Signature{Name: "Test", Email: "test@example.com", When: when}
+	hash, err := r.wt.Commit(message, &gogit.CommitOptions{Author: sig, Committer: sig})
+	require.NoError(r.t, err)
+	return hash
+}
+
+// digestCommit stores a child of parent WITHOUT moving any branch, and tags it
+// with an annotated tag, like release.yml does.
+func (r *offBranchRepo) digestCommit(parent plumbing.Hash, tag string, when time.Time) plumbing.Hash {
+	r.t.Helper()
+	p, err := r.repo.CommitObject(parent)
+	require.NoError(r.t, err)
+	sig := object.Signature{Name: "github-actions[bot]", Email: "bot@example.com", When: when}
+	c := &object.Commit{
+		Author:       sig,
+		Committer:    sig,
+		Message:      "chore(release): pin image digest for " + tag,
+		TreeHash:     p.TreeHash,
+		ParentHashes: []plumbing.Hash{parent},
+	}
+	obj := r.repo.Storer.NewEncodedObject()
+	require.NoError(r.t, c.Encode(obj))
+	hash, err := r.repo.Storer.SetEncodedObject(obj)
+	require.NoError(r.t, err)
+	_, err = r.repo.CreateTag(tag, hash, &gogit.CreateTagOptions{Tagger: &sig, Message: tag})
+	require.NoError(r.t, err)
+	return hash
+}
+
+// release runs `release --dry-run` against the repository and returns the outputs.
+func (r *offBranchRepo) release() map[string]string {
+	r.t.Helper()
+	productionRepo, err := git.OpenRepo(r.dir)
+	require.NoError(r.t, err)
+	out := filepath.Join(r.t.TempDir(), "github-output")
+	require.NoError(r.t, os.WriteFile(out, nil, 0o600))
+	r.t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	r.t.Setenv("GITHUB_REF_NAME", "master")
+	r.t.Setenv("GITHUB_OUTPUT", out)
+	r.t.Setenv("INPUT_WORKING_DIRECTORY", r.dir)
+	cmd := cmdRelease(productionRepo, &mockGitHubClient{releaseByTagErr: github.ErrNotFound}, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	cmd.SetArgs([]string{"--dry-run"})
+	require.NoError(r.t, cmd.ExecuteContext(context.Background()))
+	data, err := os.ReadFile(out)
+	require.NoError(r.t, err)
+	fields := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			fields[k] = v
+		}
+	}
+	return fields
+}
+
+func (r *offBranchRepo) sinceBaseline() map[string]bool {
+	r.t.Helper()
+	productionRepo, err := git.OpenRepo(r.dir)
+	require.NoError(r.t, err)
+	tag, err := productionRepo.FindLatestTag("")
+	require.NoError(r.t, err)
+	commits, err := productionRepo.ListCommitsSinceTag(tag)
+	require.NoError(r.t, err)
+	set := map[string]bool{}
+	for _, c := range commits {
+		set[c.SHA] = true
+	}
+	return set
+}
+
+func TestReleaseWithOffBranchDigestTagsProductionGitRepository(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 3, n, 12, 0, 0, 0, time.UTC) }
+	r := newOffBranchRepo(t)
+	r.onBranch("m0.txt", "feat!: historical", day(1))
+	m1 := r.onBranch("m1.txt", "feat: a", day(2))
+	c1 := r.digestCommit(m1, "v1.0.0", day(3))
+
+	// Rerun safety: HEAD detached at the tagged digest commit releases nothing.
+	require.NoError(t, r.wt.Checkout(&gogit.CheckoutOptions{Hash: c1}))
+	got := r.release()
+	require.Equal(t, "false", got["released"], "rerun at the tagged commit must not release")
+	require.Equal(t, "v1.0.0", got["tag"])
+	_, err := r.repo.Tag("v1.0.1")
+	require.ErrorIs(t, err, gogit.ErrTagNotFound, "dry-run must not create a tag")
+
+	// Later pushes: only commits after the shared history count.
+	require.NoError(t, r.wt.Checkout(&gogit.CheckoutOptions{Branch: plumbing.NewBranchReferenceName("master")}))
+	m2 := r.onBranch("m2.txt", "fix: x", day(4))
+	m3 := r.onBranch("m3.txt", "docs: y", day(5))
+	got = r.release()
+	require.Equal(t, "1.0.1", got["version"], "the old all-history fallback counts the historical feat! and yields 2.0.0")
+	require.Equal(t, "v1.0.1", got["tag"])
+	require.Equal(t, map[string]bool{m2.String(): true, m3.String(): true}, r.sinceBaseline())
+
+	// Releasing v1.0.1 and pushing a docs commit must not release again.
+	r.digestCommit(m3, "v1.0.1", day(6))
+	r.onBranch("m4.txt", "docs: z", day(7))
+	got = r.release()
+	require.Equal(t, "false", got["released"], "an off-branch baseline tag must not cause a re-release")
+	require.Equal(t, "1.0.1", got["version"])
+}
+
+func TestNotifyOffBranchDigestTagsProductionGitRepository(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 3, n, 12, 0, 0, 0, time.UTC) }
+	r := newOffBranchRepo(t)
+	r.onBranch("m0.txt", "feat!: historical", day(1))
+	m1 := r.onBranch("m1.txt", "feat: a", day(2))
+	r.digestCommit(m1, "v1.0.0", day(3))
+	m2 := r.onBranch("m2.txt", "fix: x", day(4))
+	m3 := r.onBranch("m3.txt", "docs: y", day(5))
+	c2 := r.digestCommit(m3, "v1.0.1", day(6))
+
+	productionRepo, err := git.OpenRepo(r.dir)
+	require.NoError(t, err)
+	gh := &recordingPRClient{mockGitHubClient: &mockGitHubClient{prs: []github.PR{{Number: 7, Title: "pr"}}}}
+	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("SEMREL_TAG", "v1.0.1")
+	t.Setenv("INPUT_WORKING_DIRECTORY", r.dir)
+	cmd := cmdNotify(productionRepo, gh, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	require.NoError(t, cmd.ExecuteContext(context.Background()))
+
+	want := map[string]bool{c2.String(): true, m3.String(): true, m2.String(): true}
+	got := map[string]bool{}
+	for _, sha := range gh.shas {
+		got[sha] = true
+	}
+	require.Equal(t, want, got, "notify must cover exactly the commits released in v1.0.1")
+}
+
+type recordingPRClient struct {
+	*mockGitHubClient
+	shas []string
+}
+
+func (c *recordingPRClient) ListPRsForCommit(ctx context.Context, owner, repo, sha string) ([]github.PR, error) {
+	c.shas = append(c.shas, sha)
+	return c.mockGitHubClient.ListPRsForCommit(ctx, owner, repo, sha)
+}
