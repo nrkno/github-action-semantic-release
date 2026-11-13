@@ -382,7 +382,22 @@ func TestWriteFields_NewlineHandling(t *testing.T) {
 	}
 }
 
-const heredocDelimiter = "_GitHubActionsFileCommandDelimeter_"
+// delimiterIn extracts the heredoc delimiter used for key in got (the
+// delimiter is random per write).
+func delimiterIn(t *testing.T, got, key string) string {
+	t.Helper()
+	prefix := key + "<<"
+	i := strings.Index(got, prefix)
+	if i < 0 {
+		t.Fatalf("no heredoc for %q in %q", key, got)
+	}
+	rest := got[i+len(prefix):]
+	d, _, _ := strings.Cut(rest, "\n")
+	if !strings.HasPrefix(d, "semrel_") || len(d) < 30 {
+		t.Fatalf("unexpected delimiter %q", d)
+	}
+	return d
+}
 
 func TestWriteFields_MultilineValue_UsesHeredoc(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -401,6 +416,7 @@ func TestWriteFields_MultilineValue_UsesHeredoc(t *testing.T) {
 		t.Fatalf("ReadFile failed: %v", err)
 	}
 
+	heredocDelimiter := delimiterIn(t, string(content), "notes")
 	expected := fmt.Sprintf("notes<<%s\n- feat: add foo\n- fix: bar baz\n%s\n", heredocDelimiter, heredocDelimiter)
 	if string(content) != expected {
 		t.Errorf("Multiline heredoc mismatch:\ngot:  %q\nwant: %q", string(content), expected)
@@ -450,11 +466,43 @@ func TestWriteFields_MixedSingleAndMultiline(t *testing.T) {
 	}
 
 	// Keys are sorted: notes, released, version
+	heredocDelimiter := delimiterIn(t, string(content), "notes")
 	expected := fmt.Sprintf(
 		"notes<<%s\n- feat: foo\n- fix: bar\n%s\nreleased=true\nversion=2.0.0\n",
 		heredocDelimiter, heredocDelimiter,
 	)
 	if string(content) != expected {
 		t.Errorf("Mixed format mismatch:\ngot:  %q\nwant: %q", string(content), expected)
+	}
+}
+
+func TestWriteFields_DelimiterIsRandomAndInjectionSafe(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "out")
+	// A value containing the old fixed delimiter must not terminate the heredoc.
+	evil := "x\n_GitHubActionsFileCommandDelimeter_\ninjected=1"
+	if err := WriteFields(f, map[string]string{"notes": evil}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(f)
+	d := delimiterIn(t, string(b), "notes")
+	if strings.Count(string(b), d) != 2 {
+		t.Errorf("delimiter must appear exactly twice, got:\n%q", string(b))
+	}
+	f2 := filepath.Join(dir, "out2")
+	if err := WriteFields(f2, map[string]string{"notes": "a\nb"}); err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := os.ReadFile(f2)
+	if d == delimiterIn(t, string(b2), "notes") {
+		t.Error("delimiter must differ between writes")
+	}
+}
+
+func TestWriteFields_RejectsInvalidKey(t *testing.T) {
+	for _, k := range []string{"", "a\nb", "a=b", "a<<b"} {
+		if err := WriteFields(filepath.Join(t.TempDir(), "o"), map[string]string{k: "v"}); err == nil {
+			t.Errorf("key %q should be rejected", k)
+		}
 	}
 }
