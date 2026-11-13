@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The container image is now published for `linux/amd64` and `linux/arm64`, so the action also runs on arm64 runners.
+
 ### Security
+
+- The container runs unprivileged and read-only: it uses the runner's uid/gid (the image declares a non-root `USER`), drops all capabilities, sets `no-new-privileges`, and mounts only the workspace, `$GITHUB_OUTPUT` and the event payload (read-only). `RUNNER_TEMP` is no longer mounted. Workflows that relied on the container reading or writing other host paths must pass them through the workspace.
+- The base image is now Alpine 3.24.4 (the previous Alpine 3.19 is end of life; fixes musl CVE-2026-40200 and busybox CVE-2024-58251), built with Go 1.26.11. `golang.org/x/net` is updated to v0.62.0 and `golang.org/x/crypto` to v0.59.0, fixing HIGH-severity CVEs in the shipped binary. Go modules, `go-git` (v5.19.3) and `go-github` (v93) are updated.
+- `GITHUB_OUTPUT` values now use a random heredoc delimiter that cannot occur in the value, and invalid output keys are rejected. A fixed delimiter let a multi-line value (for example a commit message in release notes) end the block early and inject further outputs.
 
 - Release workflow: the container image is built and signed before the tag exists, and the tagged commit carries the image digest in `action.yml`, so a commit-SHA pin selects exactly one signed image. The tagged commit is a child of the released `main` commit and is on no branch (GitHub shows a "does not belong to any branch" banner). The image `COMMIT` label is the `main` commit. The release job asserts the tag's commit is a direct child of the released commit and contains the digest exactly once.
 
@@ -17,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Network failures while calling the GitHub API now return an error. Previously the wrapper dereferenced the nil response that go-github returns when a request fails before a response arrives, and the process panicked.
+- `release` now writes the `bump` output (`major`, `minor`, `patch` or `none`) that `action.yml` already declared but the binary never set. In `--dry-run` it also tells "nothing to release" apart from "would release", which the release workflow uses to avoid building an image for a first commit that does not warrant a release.
 - `lint` on `push` events now validates the pushed commits from the GitHub event payload (`GITHUB_EVENT_PATH`) when available, preventing tagless repositories from linting their entire commit history on every branch push. Falls back to previous tag-based behaviour when the payload is unavailable. Explicit `--from-ref` overrides automatic detection.
 - `lint` now actually lints `GITHUB_BASE_REF → HEAD` on `pull_request` events as documented. Previously the base ref was resolved but silently ignored, and the range fell back to latest-annotated-tag → HEAD (or full history when no annotated tag existed), causing PR lint failures for non-conventional commits already merged to the base branch.
 - `lint` ranges now exclude all commits reachable from the range start, including via merge-commit parents. On GitHub's `refs/pull/N/merge` checkout, base-branch history reachable through the merge commit's second parent no longer leaks into the lint range.
