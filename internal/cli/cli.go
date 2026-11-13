@@ -272,7 +272,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 							"branch", ghEnv.RefName,
 							"release-branches", cfg.ReleaseBranches,
 						)
-						return outputReleaseFields(ghEnv.Output, semver.Version{}, cfg.TagPrefix, false)
+						return outputReleaseFields(ghEnv.Output, semver.Version{}, cfg.TagPrefix, false, semver.BumpNone)
 					}
 				}
 			}
@@ -363,7 +363,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 						"fix", countByType(parsedCommits, conventional.TypeFix),
 						"chore", countByType(parsedCommits, conventional.TypeChore),
 					)
-					return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false)
+					return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false, bump)
 				}
 
 				// Only log "bootstrapping" when we are actually about to create a release
@@ -387,7 +387,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 						"fix", countByType(parsedCommits, conventional.TypeFix),
 						"chore", countByType(parsedCommits, conventional.TypeChore),
 					)
-					return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false)
+					return outputReleaseFields(ghEnv.Output, currentVersion, cfg.TagPrefix, false, bump)
 				}
 			}
 
@@ -451,7 +451,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			if err == nil && existingRelease != nil {
 				// Release exists, noop
 				logger.Info("release already exists", "tag", versionTag)
-				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, false)
+				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, false, bump)
 			}
 
 			// Rung 2: Check whether the computed next-version tag already exists.
@@ -496,7 +496,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 				} else {
 					logger.Info("dry-run: tag already exists at HEAD, no release created", "tag", versionTag)
 				}
-				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, !dryRun)
+				return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, !dryRun, bump)
 			}
 			// Rung 3 (full flow) falls through here
 
@@ -564,7 +564,7 @@ func cmdRelease(gitClient GitClient, githubClient GitHubClient, logger *slog.Log
 			} else {
 				logger.Info("dry-run: computed next version, no release created", "tag", versionTag)
 			}
-			return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, !dryRun)
+			return outputReleaseFields(ghEnv.Output, nextVersion, cfg.TagPrefix, !dryRun, bump)
 		},
 	}
 
@@ -931,7 +931,10 @@ func commitSubject(message string) string {
 	return message
 }
 
-func outputReleaseFields(outputFile string, version semver.Version, tagPrefix string, released bool) error {
+// outputReleaseFields writes the release outputs. bump is the bump the commits warrant
+// ("none" when nothing releasable was found); it is meaningful in --dry-run, where
+// released is always false, so callers can tell "nothing to release" from "would release".
+func outputReleaseFields(outputFile string, version semver.Version, tagPrefix string, released bool, bump semver.BumpType) error {
 	fields := map[string]string{
 		"version":  version.String(),
 		"tag":      semver.FormatTagWithPrefix(version, tagPrefix),
@@ -939,6 +942,7 @@ func outputReleaseFields(outputFile string, version semver.Version, tagPrefix st
 		"minor":    fmt.Sprintf("%d", version.Minor),
 		"patch":    fmt.Sprintf("%d", version.Patch),
 		"released": fmt.Sprintf("%v", released),
+		"bump":     bump.String(),
 	}
 	return output.WriteFields(outputFile, fields)
 }

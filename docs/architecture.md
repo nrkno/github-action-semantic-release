@@ -197,7 +197,7 @@ image digest:
 
 ```
 push to main
-  ├─ plan     ./semrel release --dry-run          (is there a release? which tag?)
+  ├─ plan     ./semrel release --dry-run          (outputs tag + bump; release only if bump != none)
   ├─ image    docker build + push (amd64, arm64)  (ghcr.io/nrkno/github-action-semantic-release:<tag>)
   │           cosign sign (keyless, OIDC)         -> image digest
   └─ release  commit "chore(release): pin image digest" (action.yml now holds @sha256:<digest>)

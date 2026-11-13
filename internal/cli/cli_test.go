@@ -903,7 +903,7 @@ func TestOutputReleaseFields(t *testing.T) {
 	tmpfile.Close()
 
 	version := semver.Version{Major: 1, Minor: 2, Patch: 3}
-	err = outputReleaseFields(tmpfile.Name(), version, "v", true)
+	err = outputReleaseFields(tmpfile.Name(), version, "v", true, semver.BumpMinor)
 	if err != nil {
 		t.Errorf("outputReleaseFields should not error, got: %v", err)
 	}
@@ -931,7 +931,7 @@ func TestOutputReleaseFields_TagPrefix(t *testing.T) {
 	tmpfile.Close()
 
 	version := semver.Version{Major: 1, Minor: 2, Patch: 3}
-	err = outputReleaseFields(tmpfile.Name(), version, "release-", true)
+	err = outputReleaseFields(tmpfile.Name(), version, "release-", true, semver.BumpMinor)
 	if err != nil {
 		t.Errorf("outputReleaseFields should not error, got: %v", err)
 	}
@@ -1872,4 +1872,30 @@ type recordingPRClient struct {
 func (c *recordingPRClient) ListPRsForCommit(ctx context.Context, owner, repo, sha string) ([]github.PR, error) {
 	c.shas = append(c.shas, sha)
 	return c.mockGitHubClient.ListPRsForCommit(ctx, owner, repo, sha)
+}
+
+// TestReleaseDryRunReportsBump: the plan job must distinguish "nothing to release" from
+// "would release" with the bump output. In a repository without tags, a non-releasable first
+// commit used to look like a release of v0.0.0 because only the tag was inspected.
+func TestReleaseDryRunReportsBump(t *testing.T) {
+	day := func(n int) time.Time { return time.Date(2026, 3, n, 12, 0, 0, 0, time.UTC) }
+	r := newOffBranchRepo(t)
+	r.onBranch("init.txt", "chore: init", day(1))
+	got := r.release()
+	require.Equal(t, "none", got["bump"], "no releasable commit")
+	require.Equal(t, "false", got["released"])
+	require.Equal(t, "v0.0.0", got["tag"], "tag alone is not a release signal in a tagless repository")
+
+	r.onBranch("f.txt", "feat: f", day(2))
+	got = r.release()
+	require.Equal(t, "minor", got["bump"])
+	require.Equal(t, "v0.1.0", got["tag"])
+	require.Equal(t, "false", got["released"], "dry-run never reports released=true")
+
+	m := r.onBranch("x.txt", "fix: x", day(3))
+	r.digestCommit(m, "v0.1.0", day(4))
+	r.onBranch("d.txt", "docs: d", day(5))
+	got = r.release()
+	require.Equal(t, "none", got["bump"], "docs-only push after a release")
+	require.Equal(t, "v0.1.0", got["tag"])
 }

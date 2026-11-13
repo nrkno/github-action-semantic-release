@@ -10,6 +10,8 @@ timestamp: 2026-11-13
 
 ## 2026-11-13
 
+- **Update** `docs/architecture.md`: `release` now writes the `bump` output, and the release workflow's plan job releases only when `bump` is not `none`. Previously a repository without tags and without releasable commits looked like a release of `v0.0.0` and built and pushed an image before failing.
+
 - **Update** `docs/architecture.md` and `docs/architecture/release-image-pinning/`: release ranges are now reachable(HEAD) minus reachable(baseline tag), also for `notify`, so the off-branch digest tag no longer re-releases all history (review finding C1). Documented the deterministic digest commit, the stricter release check, that the image `COMMIT` label is the `main` commit, and the limits (maintenance branches unsupported, `notify` previous-tag ordering).
 
 - **Update** `docs/architecture.md`, `docs/playbook.md`, `README.md`, `SECURITY.md`: security sweep. The image is now referenced by digest in `action.yml` (written by `release.yml`, which builds and signs the image before tagging), cosign verification accepts only `release.yml@refs/heads/main`, the container runs unprivileged/read-only with narrowed mounts, base image is a supported alpine release, and docs use the `github-action-semantic-release` name consistently.
