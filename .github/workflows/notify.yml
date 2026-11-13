@@ -4,20 +4,22 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 
 jobs:
   notify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
           fetch-tags: true
       - name: Notify PRs
-        uses: nrkno/github-action-semantic-release@4e9e0cd1ef367ecb48ca492f8ad8874584d515ae
+        uses: nrkno/github-action-semantic-release@5afff0e9b820879b997a3e381d09d1dc3941dc00 # v0.14.5
         with:
           subcommand: notify
           token: ${{ secrets.GITHUB_TOKEN }}

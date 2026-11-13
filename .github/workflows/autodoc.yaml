@@ -4,11 +4,12 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   autodoc:
+    permissions:
+      contents: write
     uses: nrkno/github-workflow-action-workflow-autodoc/.github/workflows/workflow.yaml@84a54022b61e892fcc09d945795771d2d3822ad7 # v1.1.4
     with:
       runs-on: '"ubuntu-latest"'
