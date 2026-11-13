@@ -61,6 +61,15 @@
       "commitMessageTopic": "{{depName}}"
     },
     {
+      "description": "CI-only tool versions do not change what consumers run: no release.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "commitMessagePrefix": "ci(deps):",
+      "commitMessageAction": "update",
+      "commitMessageTopic": "{{depName}}"
+    },
+    {
       "matchUpdateTypes": [
         "digest",
         "pin",
@@ -99,5 +108,17 @@
   "gitIgnoredAuthors": [
     "terraform-consumer[bot]",
     "bulldozer[bot]"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "CI-only tool versions (golangci-lint, govulncheck) annotated with '# renovate:' comments in ci.yml.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/ci\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*(?:- run: go install \\S+@|version: )(?<currentValue>v\\S+)"
+      ]
+    }
   ]
 }
