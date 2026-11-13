@@ -34,6 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Uses only `GITHUB_TOKEN`; no external secrets required
 - Container signed with cosign keyless (Sigstore) for supply-chain attestation
 
-[Unreleased]: https://github.com/nrkno/github-action-sematic-release/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/nrkno/github-action-sematic-release/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nrkno/github-action-semantic-release/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/nrkno/github-action-semantic-release/releases/tag/v0.1.0
 

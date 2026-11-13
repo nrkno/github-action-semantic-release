@@ -3,10 +3,14 @@ type: Log
 title: semrel documentation log
 description: Dated change log for the semrel docs/ directory, recording every document creation and significant update.
 tags: [log, changelog, documentation]
-timestamp: 2026-11-06
+timestamp: 2026-11-13
 ---
 
 # Documentation log
+
+## 2026-11-13
+
+- **Update** `docs/architecture.md`, `docs/playbook.md`, `README.md`, `SECURITY.md`: security sweep. The image is now referenced by digest in `action.yml` (written by `release.yml`, which builds and signs the image before tagging), cosign verification accepts only `release.yml@refs/heads/main`, the container runs unprivileged/read-only with narrowed mounts, base image is a supported alpine release, and docs use the `github-action-semantic-release` name consistently.
 
 ## 2026-11-06
 

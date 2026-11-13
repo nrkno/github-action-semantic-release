@@ -36,12 +36,16 @@ immutable reference that cannot be silently changed.
     token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-The action image is tagged by release version in `action.yml`. Supply-chain
-integrity is provided by cosign keyless signatures — verify with:
+Every release commit contains the image digest in `action.yml`, so pinning a
+commit SHA pins the exact container image that runs. The action verifies the
+image's cosign keyless signature on every run and accepts only a signature made
+by this repository's `release.yml` workflow on `main`. To verify by hand, read
+the digest from `action.yml` at the commit you pinned:
 
 ```bash
-cosign verify ghcr.io/nrkno/github-action-semantic-release:vX.Y.Z \
-  --certificate-identity-regexp="https://github.com/nrkno/github-action-semantic-release" \
+IMAGE=$(grep -o 'ghcr.io/[^"]*@sha256:[0-9a-f]\{64\}' action.yml | head -1)
+cosign verify "$IMAGE" \
+  --certificate-identity="https://github.com/nrkno/github-action-semantic-release/.github/workflows/release.yml@refs/heads/main" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 

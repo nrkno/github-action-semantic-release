@@ -3,7 +3,7 @@ type: Playbook
 title: semrel playbook
 description: Step-by-step runbooks for common semrel operations — first release, debugging failures, handling conflicts, bootstrapping, and skipping a release.
 tags: [playbook, runbook, first-release, debugging, bootstrap, troubleshooting]
-timestamp: 2026-06-30
+timestamp: 2026-11-13
 ---
 
 # Playbook
@@ -305,8 +305,10 @@ tag-prefix: ""
 After a release, verify the container image signature:
 
 ```bash
-cosign verify ghcr.io/nrkno/github-action-sematic-release:v1.2.3 \
-  --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+# Read the digest from action.yml at the release commit you pinned
+IMAGE=$(grep -o 'ghcr.io/[^"]*@sha256:[0-9a-f]\{64\}' action.yml | head -1)
+cosign verify "$IMAGE" \
+  --certificate-identity="https://github.com/nrkno/github-action-semantic-release/.github/workflows/release.yml@refs/heads/main" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
@@ -327,7 +329,7 @@ of the commit content and cannot be redirected.
 **Steps:**
 
 1. **Find the release on the releases page.**
-   Go to [github.com/nrkno/github-action-sematic-release/releases](https://github.com/nrkno/github-action-sematic-release/releases)
+   Go to [github.com/nrkno/github-action-semantic-release/releases](https://github.com/nrkno/github-action-semantic-release/releases)
    and open the release you want to use.
 
 2. **Copy the commit SHA.**
@@ -339,7 +341,7 @@ of the commit content and cannot be redirected.
 
    ```yaml
    # Pin to a specific commit SHA (see Releases for the SHA of each release)
-   - uses: nrkno/github-action-sematic-release@<COMMIT_SHA>
+   - uses: nrkno/github-action-semantic-release@<COMMIT_SHA>
      with:
        subcommand: release
        token: ${{ secrets.GITHUB_TOKEN }}
@@ -348,15 +350,16 @@ of the commit content and cannot be redirected.
    Replace `<COMMIT_SHA>` with the full 40-character SHA, e.g.:
 
    ```yaml
-   - uses: nrkno/github-action-sematic-release@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+   - uses: nrkno/github-action-semantic-release@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
    ```
 
 4. **(Optional) Verify the cosign signature** to confirm the image at that SHA
    was built by NRK's CI pipeline:
 
    ```bash
-   cosign verify ghcr.io/nrkno/github-action-sematic-release:vX.Y.Z \
-     --certificate-identity-regexp="https://github.com/nrkno/github-action-sematic-release/.*" \
+   IMAGE=$(grep -o 'ghcr.io/[^"]*@sha256:[0-9a-f]\{64\}' action.yml | head -1)
+   cosign verify "$IMAGE" \
+     --certificate-identity="https://github.com/nrkno/github-action-semantic-release/.github/workflows/release.yml@refs/heads/main" \
      --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
    ```
 
