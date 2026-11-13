@@ -19,6 +19,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
       - name: Notify PRs
+        # TODO(bump): v0.14.5 predates the container hardening and digest-pinned image. Bump to the
+        # first release of this branch (commit SHA from the release summary) once it is published.
         uses: nrkno/github-action-semantic-release@5afff0e9b820879b997a3e381d09d1dc3941dc00 # v0.14.5
         with:
           subcommand: notify
