@@ -37,26 +37,11 @@
       "commitMessageTopic": "{{depName}}"
     },
     {
-      "description": "action.yml ships cosign-installer to every consumer job: release it.",
+      "description": "Action bumps change what consumers execute, so they must release a patch (fix): action.yml ships cosign-installer to every consumer job, and workflow action bumps are released too.",
       "matchManagers": [
         "github-actions"
-      ],
-      "matchFileNames": [
-        "action.yml"
       ],
       "commitMessagePrefix": "fix(deps):",
-      "commitMessageAction": "update",
-      "commitMessageTopic": "{{depName}}"
-    },
-    {
-      "description": "Workflow-only action updates do not change what consumers run: no release.",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "matchFileNames": [
-        ".github/workflows/**"
-      ],
-      "commitMessagePrefix": "ci(deps):",
       "commitMessageAction": "update",
       "commitMessageTopic": "{{depName}}"
     },
