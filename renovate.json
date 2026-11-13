@@ -1,0 +1,103 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    "mergeConfidence:all-badges"
+  ],
+  "ignorePresets": [
+    "security:minimumReleaseAgeNpm"
+  ],
+  "timezone": "Europe/Oslo",
+  "minimumReleaseAge": "14 days",
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "after 8am and before 4pm every weekday"
+  ],
+  "vulnerabilityAlerts": {
+    "minimumReleaseAge": null,
+    "schedule": [
+      "at any time"
+    ],
+    "labels": [
+      "dependencies",
+      "security"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "Everything that ends up in the shipped binary or image produces a patch release (semrel bumps only on fix/feat).",
+      "matchManagers": [
+        "gomod",
+        "dockerfile"
+      ],
+      "commitMessagePrefix": "fix(deps):",
+      "commitMessageAction": "update",
+      "commitMessageTopic": "{{depName}}"
+    },
+    {
+      "description": "action.yml ships cosign-installer to every consumer job: release it.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchFileNames": [
+        "action.yml"
+      ],
+      "commitMessagePrefix": "fix(deps):",
+      "commitMessageAction": "update",
+      "commitMessageTopic": "{{depName}}"
+    },
+    {
+      "description": "Workflow-only action updates do not change what consumers run: no release.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchFileNames": [
+        ".github/workflows/**"
+      ],
+      "commitMessagePrefix": "ci(deps):",
+      "commitMessageAction": "update",
+      "commitMessageTopic": "{{depName}}"
+    },
+    {
+      "matchUpdateTypes": [
+        "digest",
+        "pin",
+        "pinDigest",
+        "replacement"
+      ],
+      "addLabels": [
+        "digest"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "addLabels": [
+        "patch"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "addLabels": [
+        "minor"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "addLabels": [
+        "major"
+      ]
+    }
+  ],
+  "gitIgnoredAuthors": [
+    "terraform-consumer[bot]",
+    "bulldozer[bot]"
+  ]
+}
