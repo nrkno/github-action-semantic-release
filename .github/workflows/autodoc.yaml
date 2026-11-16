@@ -3,11 +3,13 @@ name: Update documentation
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions: {}
 
 jobs:
   autodoc:
+    if: github.event.pull_request.draft == false
     permissions:
       contents: write
     uses: nrkno/github-workflow-action-workflow-autodoc/.github/workflows/workflow.yaml@84a54022b61e892fcc09d945795771d2d3822ad7 # v1.1.4
