@@ -99,8 +99,8 @@ func (c *Client) GetReleaseByTag(ctx context.Context, owner, repo, tag string) (
 func (c *Client) CreateRelease(ctx context.Context, owner, repo string, opts CreateReleaseOptions) (*Release, error) {
 	input := gogithub.CreateReleaseRequest{
 		TagName: opts.TagName,
-		Name:    gogithub.Ptr(opts.Name),
-		Body:    gogithub.Ptr(opts.Body),
+		Name:    &opts.Name,
+		Body:    &opts.Body,
 	}
 
 	rel, resp, err := c.client.Repositories.CreateRelease(ctx, owner, repo, input)
