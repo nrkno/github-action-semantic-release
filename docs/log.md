@@ -10,6 +10,7 @@ timestamp: 2026-11-18
 
 ## 2026-11-18
 
+- **Update** `docs/api-reference.md`, `docs/configuration.md`, and `docs/playbook.md`: clarify that lint, release, and notes select semver tags regardless of annotation, while notify still orders annotated tags by the tagged commit's author date.
 - **Update** `docs/playbook.md`, `docs/configuration.md`, and `README.md`: separate consumer setup from the action's first digest-pinned release, document the hardened runner requirements and pin handoff, and clarify the first-version calculation and notification trigger.
 
 ## 2026-11-13

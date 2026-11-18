@@ -3,7 +3,7 @@ type: API Reference
 title: semrel API reference
 description: Complete reference for all semrel subcommands — synopsis, flags, exit codes, stdout/stderr behaviour, and GITHUB_OUTPUT fields emitted.
 tags: [api-reference, subcommands, exit-codes, flags, github-output]
-timestamp: 2026-08-12
+timestamp: 2026-11-18
 ---
 
 # API reference
@@ -48,7 +48,7 @@ semrel lint [--from-ref <ref>] [--to-ref <ref>]
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--from-ref` | string | auto | Range start. On `pull_request`: `GITHUB_BASE_REF`. On `push`: pushed commits from `GITHUB_EVENT_PATH` (falls back to latest annotated tag when payload is unavailable). On `release`: latest annotated tag. On other events: beginning of history. Explicit `--from-ref` overrides all automatic detection. |
+| `--from-ref` | string | auto | Range start. On `pull_request`: `GITHUB_BASE_REF`. On `push`: pushed commits from `GITHUB_EVENT_PATH` in automatic mode. On `release` and when a push falls back to a Git range: the highest matching semver tag, if any. On other events: beginning of history. An explicit `--from-ref` overrides automatic detection. |
 | `--to-ref` | string | `HEAD` | Range end. |
 
 ### Automatic range detection
@@ -57,16 +57,18 @@ semrel lint [--from-ref <ref>] [--to-ref <ref>]
 | ------------------- | -------------------- | ------------------ |
 | `pull_request` | `GITHUB_BASE_REF` (target branch) | `HEAD` |
 | `push` | pushed commits from `GITHUB_EVENT_PATH` | pushed commits from `GITHUB_EVENT_PATH` |
-| `release` | latest annotated tag | `HEAD` |
+| `release` | highest matching semver tag, or beginning of history if none | `HEAD` |
 | *(other / empty)* | beginning of history | `HEAD` |
 
 > **Push event payload:** On `push` events, `semrel lint` reads the pushed
 > commits directly from the GitHub event payload (`GITHUB_EVENT_PATH`)
 > instead of walking git history. This avoids full-history linting in tagless
 > repositories and correctly handles first pushes to new branches. If the
-> payload is unavailable or unreadable, semrel falls back to the previous
-> tag-based behaviour. Explicit `--from-ref` always overrides automatic
-> detection.
+> payload is unavailable or unreadable, semrel falls back to a Git range
+> starting at the highest matching semver tag, or the beginning of history
+> if none matches. Matching uses the configured `tag-prefix` and includes
+> both annotated and lightweight tags. Explicit `--from-ref` always
+> overrides automatic detection.
 
 ### Exit codes
 
@@ -153,7 +155,7 @@ narrative of the release in GitHub Actions logs:
 | When | Key | Description |
 | ---- | --- | ----------- |
 | After parsing commits | `msg=commits in release` | `count` total parsed commits, `feat` feature count, `fix` fix count, `breaking` breaking-change count. |
-| Bootstrap path only (no prior tags) | `msg=no prior annotated tags found — bootstrapping version` | `version` — the computed bootstrap tag (e.g. `v0.0.1`). |
+| Bootstrap with a version bump (no matching semver tag) | `msg=no prior annotated tags found — bootstrapping version` | `initial-version` — the configured baseline; `version` — the computed tag (e.g. `v0.0.1`). The literal log message still says “annotated tags,” but lightweight semver tags also count. |
 | After version computed | `msg=bump detected` | `type` (`major`/`minor`/`patch`/`none`), `from` previous tag, `to` next tag. |
 | Once per commit with an associated PR | `msg=PR in release` | `pr` (`#N`), `title`, `sha` (7-char). |
 | After identifying the highest-bump commit | `msg=release triggered by PR` | `pr` (`#N`), `title`, `url`. Falls back to `msg=release triggered by commit` with `sha` and `message` if no PR is found. |
@@ -206,8 +208,8 @@ None.
 ### What it does
 
 1. Reads `SEMREL_TAG` to identify the released tag.
-2. Finds the previous annotated tag in the repository.
-3. Enumerates all commits between the previous tag and the released tag.
+2. Looks for the previous annotated tag by the author date of the tagged commit, not by semver. If the released tag is lightweight or has no earlier annotated tag, there is no previous tag.
+3. Takes the commits reachable from the released tag's commit, excluding those reachable from the previous tag's commit when there is one.
 4. For each commit, looks up associated PRs via the GitHub API.
 5. Deduplicates the PR list across all commits.
 6. Posts an idempotent comment on each unique PR.
@@ -246,8 +248,10 @@ Nothing. Log messages go to stderr.
 
 ## `semrel notes`
 
-Generates Markdown release notes from conventional commits since the last annotated
-tag and linked PRs.
+Generates Markdown release notes from conventional commits and linked PRs.
+It takes commits reachable from `HEAD` and excludes those reachable from the
+highest semver tag matching the configured `tag-prefix`, whether annotated or
+lightweight. If no tag matches, it uses the full history.
 
 ### Synopsis
 

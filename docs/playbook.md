@@ -236,8 +236,9 @@ Note: `*` does not cross `/` — `releases/*` will NOT match `releases/team/v2`.
 
 ## How to bootstrap at a non-zero version
 
-When no annotated tags exist, semrel starts at `0.0.0` and applies the
-detected bump. To start at a different baseline:
+When no semver tag matches the configured `tag-prefix`, semrel starts at
+`0.0.0` and applies the detected bump. Annotated and lightweight tags both
+count. To start at a different baseline:
 
 ```yaml
 # .semrelrc.yml

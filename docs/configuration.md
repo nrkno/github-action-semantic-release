@@ -82,7 +82,7 @@ passed to `semrel notify`.
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--from-ref` | string | auto-detected | Start of the commit range. Defaults to `GITHUB_BASE_REF` on `pull_request` events. On `push` events, automatic mode reads pushed commits from `GITHUB_EVENT_PATH`; explicit `--from-ref` overrides that and uses a git range. On `release` events, defaults to the latest annotated tag. |
+| `--from-ref` | string | auto-detected | Start of the commit range. Defaults to `GITHUB_BASE_REF` on `pull_request` events. On `push` events, automatic mode reads pushed commits from `GITHUB_EVENT_PATH`; explicit `--from-ref` overrides that and uses a Git range. On `release` events, defaults to the highest semver tag matching `tag-prefix`, whether annotated or lightweight, or the beginning of history if none matches. |
 | `--to-ref` | string | `HEAD` | End of the commit range. |
 
 ### `release`
@@ -162,7 +162,7 @@ commit-types:
   # Full replacement for the built-in type set. Takes precedence over extra-types.
   allowed-types: []
 
-# Baseline version for the bootstrap case (first release, no annotated tags).
+# Baseline version when no semver tag matches tag-prefix.
 initial-version: "0.0.0"
 
 lint:

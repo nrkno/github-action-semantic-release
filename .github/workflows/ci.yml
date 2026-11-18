@@ -68,7 +68,7 @@ jobs:
       - run: govulncheck ./...
 
   docker:
-    # Build both release platforms, then run the local amd64 image without publishing.
+    # Build both release platforms, then smoke-test the launcher with the local amd64 image.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -82,5 +82,6 @@ jobs:
           push: false
       - name: Load the local smoke-test image
         run: docker buildx build --load --platform linux/amd64 --tag semrel-smoke .
-      - name: Exercise the container invocation
+      # Calls run-container.sh directly; does not exercise the composite action or signature verification.
+      - name: Smoke-test the container launcher
         run: bash .github/tests/container-smoke.sh semrel-smoke
