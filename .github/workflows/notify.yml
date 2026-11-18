@@ -4,20 +4,24 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 
 jobs:
   notify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
           fetch-tags: true
       - name: Notify PRs
-        uses: nrkno/github-action-semantic-release@4e9e0cd1ef367ecb48ca492f8ad8874584d515ae
+        # TODO(bump): v0.14.5 predates the container hardening and digest-pinned image. Bump to the
+        # first release of this branch (commit SHA from the release summary) once it is published.
+        uses: nrkno/github-action-semantic-release@v0.14.5
         with:
           subcommand: notify
           token: ${{ secrets.GITHUB_TOKEN }}

@@ -3,10 +3,16 @@ type: Log
 title: Architecture decisions change log
 description: Chronological record of changes to the docs/architecture/ bundle.
 tags: [changelog, log, okf, architecture]
-timestamp: 2026-11-06
+timestamp: 2026-11-13
 ---
 
 # Architecture decisions update log
+
+## 2026-11-13
+
+**Creation**: `docs/architecture/release-image-pinning/` — ADR-001 accepts the off-branch, deterministic digest commit for releases and replaces semrel's all-history fallback for unreachable tags with reachable(HEAD) minus reachable(tag), also in `ListCommitsBetweenTags`. Resolves review finding C1 and the open off-branch baseline policy.
+**Update**: release-image-pinning ADR-001 amended after critic review and implemented (git.go ranges, release.yml check, tests).
+**Update**: commit-ranges ADR-001 status — off-branch fallback marked superseded by release-image-pinning ADR-001.
 
 ## 2026-11-06
 

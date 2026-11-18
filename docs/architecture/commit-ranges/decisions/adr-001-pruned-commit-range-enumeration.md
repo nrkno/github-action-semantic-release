@@ -6,7 +6,7 @@ tags: [git, commit-ranges, release, lint, adr]
 timestamp: 2026-11-06
 ---
 
-**Status:** accepted and implemented; focused object-read and production CLI composition proofs pass. Off-branch selected tags preserve the existing all-HEAD-history fallback.
+**Status:** accepted and implemented; focused object-read and production CLI composition proofs pass. Off-branch selected tags preserve the existing all-HEAD-history fallback. That fallback is superseded (accepted and implemented 2026-11-13) by [release-image-pinning ADR-001](/docs/architecture/release-image-pinning/decisions/adr-001-off-branch-digest-tag-with-ancestry-ranges.md): release ranges become reachable(HEAD) minus reachable(tag) whether or not the tag is an ancestor.
 
 ## Decision
 

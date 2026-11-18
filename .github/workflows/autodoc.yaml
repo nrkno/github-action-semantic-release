@@ -3,12 +3,16 @@ name: Update documentation
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   autodoc:
+    # The reusable workflow pushes to the PR branch; never run it for forks or drafts.
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    permissions:
+      contents: write
     uses: nrkno/github-workflow-action-workflow-autodoc/.github/workflows/workflow.yaml@84a54022b61e892fcc09d945795771d2d3822ad7 # v1.1.4
     with:
       runs-on: '"ubuntu-latest"'

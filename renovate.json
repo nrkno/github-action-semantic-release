@@ -1,0 +1,127 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    "mergeConfidence:all-badges"
+  ],
+  "ignorePresets": [
+    "security:minimumReleaseAgeNpm"
+  ],
+  "timezone": "Europe/Oslo",
+  "minimumReleaseAge": "14 days",
+  "labels": [
+    "dependencies"
+  ],
+  "schedule": [
+    "after 8am and before 4pm every weekday"
+  ],
+  "vulnerabilityAlerts": {
+    "minimumReleaseAge": null,
+    "schedule": [
+      "at any time"
+    ],
+    "labels": [
+      "dependencies",
+      "security"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "Everything that ends up in the shipped binary or image produces a patch release (semrel bumps only on fix/feat).",
+      "matchManagers": [
+        "gomod",
+        "dockerfile"
+      ],
+      "commitMessagePrefix": "fix(deps):",
+      "commitMessageAction": "update",
+      "commitMessageTopic": "{{depName}}"
+    },
+    {
+      "description": "Action bumps change what consumers execute, so they must release a patch (fix): action.yml ships cosign-installer to every consumer job, and workflow action bumps are released too.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "commitMessagePrefix": "fix(deps):",
+      "commitMessageAction": "update",
+      "commitMessageTopic": "{{depName}}"
+    },
+    {
+      "description": "CI-only tool versions do not change what consumers run: no release.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "commitMessagePrefix": "ci(deps):",
+      "commitMessageAction": "update",
+      "commitMessageTopic": "{{depName}}"
+    },
+    {
+      "matchUpdateTypes": [
+        "digest",
+        "pin",
+        "pinDigest",
+        "replacement"
+      ],
+      "addLabels": [
+        "digest"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "addLabels": [
+        "patch"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "addLabels": [
+        "minor"
+      ]
+    },
+    {
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "addLabels": [
+        "major"
+      ]
+    },
+    {
+      "description": "Step-level actions keep full semver tags: .github/workflows/actions.lock records and enforces the SHAs, so Renovate must not pin digests here (overrides the preset's pinGitHubActionDigests).",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action"],
+      "pinDigests": false
+    },
+    {
+      "description": "Reusable workflow calls (jobs.<job_id>.uses) are not covered by the lockfile: keep them pinned to a full commit SHA with a version comment.",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["workflow"],
+      "pinDigests": true
+    },
+    {
+      "description": "Steps in the repository's own action.yml are not covered by the lockfile: keep them pinned to a full commit SHA with a version comment.",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": ["action.yml", "action.yaml"],
+      "pinDigests": true
+    }
+  ],
+  "gitIgnoredAuthors": [
+    "terraform-consumer[bot]",
+    "bulldozer[bot]"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "CI-only tool versions (golangci-lint, govulncheck) annotated with '# renovate:' comments in ci.yml.",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/ci\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*(?:- run: go install \\S+@|version: )(?<currentValue>v\\S+)"
+      ]
+    }
+  ]
+}

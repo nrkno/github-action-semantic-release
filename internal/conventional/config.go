@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 )
 
 // BumpLevel is a string alias for bump-rules map values.

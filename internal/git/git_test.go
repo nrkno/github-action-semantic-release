@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1309,24 +1310,106 @@ func TestListCommitsSinceTag_MergeCommitIncludesFeatureBranch(t *testing.T) {
 	}
 }
 
-func TestListCommitsSinceTag_OffBranchKeepsAllHeadHistory(t *testing.T) {
+func commitSet(commits []Commit) map[string]bool {
+	set := make(map[string]bool, len(commits))
+	for _, c := range commits {
+		set[c.SHA] = true
+	}
+	return set
+}
+
+// TestListCommitsSinceTag_OffBranchTagExcludesSharedHistory: the release tag points at a
+// child of M1 that is not on the HEAD branch. Only commits after M1 may be counted.
+func TestListCommitsSinceTag_OffBranchTagExcludesSharedHistory(t *testing.T) {
 	repo := createInMemoryRepo(t)
-	now := time.Now()
-	base := createCommitWithTime(t, repo, "base", "base", "base", now)
-	other := createCommitWithTime(t, repo, "head", "head", "off branch", now.Add(time.Second))
-	selected := createCommitOffParent(t, repo, "selected tag", now.Add(2*time.Second), base.Hash)
-	tag := &Tag{Name: "v2.0.0", targetSHA: selected.String()}
+	day := func(n int) time.Time { return time.Date(2026, 3, n, 12, 0, 0, 0, time.UTC) }
+	createCommitWithTime(t, repo, "base", "base", "base", day(1))
+	m1 := createCommitWithTime(t, repo, "m1", "m1", "feat: m1", day(2))
+	c1 := createCommitOffParent(t, repo, "chore(release): pin image digest", day(3), m1.Hash)
+	m2 := createCommitWithTime(t, repo, "m2", "m2", "fix: m2", day(4))
 	r := &Repository{raw: repo}
-	commits, err := r.ListCommitsSinceTag(tag)
+	commits, err := r.ListCommitsSinceTag(&Tag{Name: "v1.0.0", targetSHA: c1.String()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]bool{}
-	for _, c := range commits {
-		got[c.SHA] = true
+	want := map[string]bool{m2.Hash.String(): true}
+	if got := commitSet(commits); !reflect.DeepEqual(got, want) {
+		t.Fatalf("range = %v, want exactly {M2} = %v", got, want)
 	}
-	if len(got) != 2 || !got[base.Hash.String()] || !got[other.Hash.String()] {
-		t.Fatalf("off-branch fallback should preserve all HEAD history, got %v", got)
+}
+
+// TestListCommitsSinceTag_UnrelatedTagKeepsAllHeadHistory documents the unchanged case:
+// a tag on a root that shares no history with HEAD excludes nothing.
+func TestListCommitsSinceTag_UnrelatedTagKeepsAllHeadHistory(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	day := func(n int) time.Time { return time.Date(2026, 3, n, 12, 0, 0, 0, time.UTC) }
+	base := createCommitWithTime(t, repo, "base", "base", "base", day(1))
+	head := createCommitWithTime(t, repo, "head", "head", "head", day(2))
+	sig := object.Signature{Name: "Test Author", Email: "test@example.com", When: day(3)}
+	orphan := &object.Commit{Author: sig, Committer: sig, Message: "orphan root", TreeHash: base.TreeHash}
+	obj := repo.Storer.NewEncodedObject()
+	if err := orphan.Encode(obj); err != nil {
+		t.Fatal(err)
+	}
+	orphanHash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &Repository{raw: repo}
+	commits, err := r.ListCommitsSinceTag(&Tag{Name: "v1.0.0", targetSHA: orphanHash.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{base.Hash.String(): true, head.Hash.String(): true}
+	if got := commitSet(commits); !reflect.DeepEqual(got, want) {
+		t.Fatalf("range = %v, want all HEAD history %v", got, want)
+	}
+}
+
+// TestListCommitsBetweenTags_OffBranchTags: both tags are digest commits off the branch.
+// The old committer-time walk never meets `from` on this path and returns all history.
+func TestListCommitsBetweenTags_OffBranchTags(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	day := func(n int) time.Time { return time.Date(2026, 3, n, 12, 0, 0, 0, time.UTC) }
+	createCommitWithTime(t, repo, "base", "base", "base", day(1))
+	m1 := createCommitWithTime(t, repo, "m1", "m1", "feat: m1", day(2))
+	c1 := createCommitOffParent(t, repo, "chore(release): pin image digest v1.0.0", day(3), m1.Hash)
+	m2 := createCommitWithTime(t, repo, "m2", "m2", "fix: m2", day(4))
+	c2 := createCommitOffParent(t, repo, "chore(release): pin image digest v1.1.0", day(5), m2.Hash)
+	r := &Repository{raw: repo}
+	commits, err := r.ListCommitsBetweenTags(
+		&Tag{Name: "v1.0.0", targetSHA: c1.String()},
+		&Tag{Name: "v1.1.0", targetSHA: c2.String()},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{c2.String(): true, m2.Hash.String(): true}
+	if got := commitSet(commits); !reflect.DeepEqual(got, want) {
+		t.Fatalf("range = %v, want exactly {C2, M2} = %v", got, want)
+	}
+}
+
+// TestListCommitsBetweenTags_MergeOlderThanFrom: a side commit authored before `from` but
+// merged after it is part of the release (I3: ancestry decides, not timestamps).
+func TestListCommitsBetweenTags_MergeOlderThanFrom(t *testing.T) {
+	repo := createInMemoryRepo(t)
+	day := func(n int) time.Time { return time.Date(2026, 3, n, 12, 0, 0, 0, time.UTC) }
+	base := createCommitWithTime(t, repo, "base", "base", "base", day(1))
+	side := createCommitOffParent(t, repo, "feat: side work", day(2), base.Hash)
+	from := createCommitWithTime(t, repo, "from", "from", "chore: from", day(10))
+	merge := createMergeCommit(t, repo, "Merge side", day(20), from.Hash, side)
+	r := &Repository{raw: repo}
+	commits, err := r.ListCommitsBetweenTags(
+		&Tag{Name: "v1.0.0", targetSHA: from.Hash.String()},
+		&Tag{Name: "v1.1.0", targetSHA: merge.String()},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{merge.String(): true, side.String(): true}
+	if got := commitSet(commits); !reflect.DeepEqual(got, want) {
+		t.Fatalf("range = %v, want {merge, side} = %v", got, want)
 	}
 }
 

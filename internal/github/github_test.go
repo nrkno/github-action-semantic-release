@@ -167,6 +167,16 @@ func TestGetReleaseByTag(t *testing.T) {
 func TestCreateRelease(t *testing.T) {
 	t.Run("success 201", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var request struct {
+				TagName string  `json:"tag_name"`
+				Name    *string `json:"name"`
+				Body    *string `json:"body"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode request: %v", err)
+			} else if request.TagName != "v2.0.0" || request.Name == nil || *request.Name != "Version 2" || request.Body == nil || *request.Body != "New release" {
+				t.Errorf("unexpected release request: %+v", request)
+			}
 			w.WriteHeader(http.StatusCreated)
 			body, _ := json.Marshal(map[string]interface{}{
 				"id":       54321,
@@ -184,6 +194,7 @@ func TestCreateRelease(t *testing.T) {
 		}
 		rel, err := client.CreateRelease(context.Background(), "owner", "repo", CreateReleaseOptions{
 			TagName: "v2.0.0",
+			Name:    "Version 2",
 			Body:    "New release",
 		})
 
@@ -728,5 +739,22 @@ func TestIsAlreadyExists(t *testing.T) {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
+	}
+}
+
+func TestClient_NetworkErrorDoesNotPanic(t *testing.T) {
+	c, err := NewClient("tok", "http://127.0.0.1:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := c.GetReleaseByTag(ctx, "o", "r", "v1"); err == nil {
+		t.Error("GetReleaseByTag: want error")
+	}
+	if _, err := c.ListPRsForCommit(ctx, "o", "r", "abc"); err == nil {
+		t.Error("ListPRsForCommit: want error")
+	}
+	if err := c.PostPRComment(ctx, "o", "r", 1, "x"); err == nil {
+		t.Error("PostPRComment: want error")
 	}
 }

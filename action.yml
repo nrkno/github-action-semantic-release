@@ -73,16 +73,33 @@ runs:
   using: composite
   steps:
     - name: Install cosign
-      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+    # The container image is addressed by digest, never by a mutable tag. The
+    # release workflow (.github/workflows/release.yml) rewrites the all-zero
+    # digest below to the digest of the image it just built and signed, and
+    # tags the commit that contains that change. Pinning this action to a
+    # commit SHA therefore pins the exact image that runs.
+    - name: Resolve image
+      id: image
+      shell: bash
+      run: |
+        echo "ref=ghcr.io/nrkno/github-action-semantic-release@sha256:0000000000000000000000000000000000000000000000000000000000000000" >> "$GITHUB_OUTPUT"
 
     - id: verify
       shell: bash
       env:
-        ACTION_IMAGE_REPO: ${{ github.action_repository }}
-        ACTION_IMAGE_TAG: ${{ github.action_ref }}
+        ACTION_IMAGE: ${{ steps.image.outputs.ref }}
       run: |
-        cosign verify "ghcr.io/${ACTION_IMAGE_REPO}:${ACTION_IMAGE_TAG}" \
-          --certificate-identity-regexp "https://github.com/nrkno/github-action-semantic-release/.github/workflows/.*" \
+        set -euo pipefail
+        if [[ "$ACTION_IMAGE" == *"@sha256:0000000000000000000000000000000000000000000000000000000000000000" ]]; then
+          echo "::error::This action.yml has no image digest. Use a released version of nrkno/github-action-semantic-release (pin its commit SHA), not an unreleased commit or branch."
+          exit 1
+        fi
+        # Only an image signed by this repository's release workflow on main
+        # is accepted. Signatures from any other workflow or ref are rejected.
+        cosign verify "$ACTION_IMAGE" \
+          --certificate-identity "https://github.com/nrkno/github-action-semantic-release/.github/workflows/release.yml@refs/heads/main" \
           --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
 
     - id: run
@@ -92,54 +109,7 @@ runs:
         # INPUT_* automatically (unlike Docker/JS actions).
         GITHUB_TOKEN: ${{ inputs.token }}
         INPUT_SUBCOMMAND: ${{ inputs.subcommand }}
-        INPUT_TOKEN: ${{ inputs.token }}
         INPUT_DRY_RUN: ${{ inputs.dry-run }}
         INPUT_WORKING_DIRECTORY: ${{ inputs.working-directory }}
-        ACTION_IMAGE_REPO: ${{ github.action_repository }}
-        ACTION_IMAGE_TAG: ${{ github.action_ref }}
-      run: |
-        # Explicit allowlist — only vars semrel actually consumes (verified
-        # against internal/env/env.go, cmd/semrel/main.go, internal/cli/cli.go,
-        # and entrypoint.sh). Never dump the full environment: that would leak
-        # ACTIONS_RUNTIME_TOKEN, ACTIONS_ID_TOKEN_REQUEST_TOKEN, and other
-        # job-level secrets into the container.
-        # NOTE: --env-file is line-oriented and does not support multiline values.
-        # All vars below are single-line; this is safe for this action.
-        # Do not add vars with multiline values without revisiting this approach.
-        cat > "$RUNNER_TEMP/semrel-env" <<EOF
-        GITHUB_TOKEN=$GITHUB_TOKEN
-        GITHUB_API_URL=$GITHUB_API_URL
-        GITHUB_REPOSITORY=$GITHUB_REPOSITORY
-        GITHUB_REF=$GITHUB_REF
-        GITHUB_REF_NAME=$GITHUB_REF_NAME
-        GITHUB_SHA=$GITHUB_SHA
-        GITHUB_EVENT_NAME=$GITHUB_EVENT_NAME
-        GITHUB_BASE_REF=$GITHUB_BASE_REF
-        GITHUB_EVENT_PATH=$GITHUB_EVENT_PATH
-        GITHUB_OUTPUT=$GITHUB_OUTPUT
-        GITHUB_RUN_ID=$GITHUB_RUN_ID
-        GITHUB_ACTOR=$GITHUB_ACTOR
-        GITHUB_SERVER_URL=$GITHUB_SERVER_URL
-        GITHUB_ACTIONS=$GITHUB_ACTIONS
-        SEMREL_LOG_LEVEL=$SEMREL_LOG_LEVEL
-        INPUT_SUBCOMMAND=$INPUT_SUBCOMMAND
-        INPUT_TOKEN=$INPUT_TOKEN
-        INPUT_DRY_RUN=$INPUT_DRY_RUN
-        INPUT_WORKING_DIRECTORY=$INPUT_WORKING_DIRECTORY
-        SEMREL_TAG=$SEMREL_TAG
-        SEMREL_RELEASE_URL=$SEMREL_RELEASE_URL
-        EOF
-        chmod 600 "$RUNNER_TEMP/semrel-env"
-
-        # Identity-mount GITHUB_WORKSPACE and RUNNER_TEMP so the container sees
-        # the same absolute paths as the host. RUNNER_TEMP covers GITHUB_OUTPUT,
-        # GITHUB_STEP_SUMMARY, GITHUB_ENV, and GITHUB_STATE (all live there).
-        # ACTION_IMAGE_TAG is the exact ref written in the consumer's uses: field
-        # (e.g. v0.11.0 or a full 40-char commit SHA) — the image is tagged with
-        # both, so either pinning style resolves to the correct image.
-        docker run --rm \
-          --env-file "$RUNNER_TEMP/semrel-env" \
-          -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
-          -v "$RUNNER_TEMP:$RUNNER_TEMP" \
-          -w "$GITHUB_WORKSPACE" \
-          "ghcr.io/${ACTION_IMAGE_REPO}:${ACTION_IMAGE_TAG}"
+        ACTION_IMAGE: ${{ steps.image.outputs.ref }}
+      run: bash "$GITHUB_ACTION_PATH/run-container.sh"

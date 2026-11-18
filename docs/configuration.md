@@ -3,7 +3,7 @@ type: Configuration
 title: semrel configuration reference
 description: All environment variables consumed by semrel, subcommand flags, and GITHUB_OUTPUT fields written on a successful release.
 tags: [configuration, environment-variables, flags, github-output]
-timestamp: 2026-08-12
+timestamp: 2026-11-18
 ---
 
 # Configuration
@@ -82,7 +82,7 @@ passed to `semrel notify`.
 
 | Flag | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
-| `--from-ref` | string | auto-detected | Start of the commit range. Defaults to `GITHUB_BASE_REF` on `pull_request` events. On `push` events, automatic mode reads pushed commits from `GITHUB_EVENT_PATH`; explicit `--from-ref` overrides that and uses a git range. On `release` events, defaults to the latest annotated tag. |
+| `--from-ref` | string | auto-detected | Start of the commit range. Defaults to `GITHUB_BASE_REF` on `pull_request` events. On `push` events, automatic mode reads pushed commits from `GITHUB_EVENT_PATH`; explicit `--from-ref` overrides that and uses a Git range. On `release` events, defaults to the highest semver tag matching `tag-prefix`, whether annotated or lightweight, or the beginning of history if none matches. |
 | `--to-ref` | string | `HEAD` | End of the commit range. |
 
 ### `release`
@@ -162,7 +162,7 @@ commit-types:
   # Full replacement for the built-in type set. Takes precedence over extra-types.
   allowed-types: []
 
-# Baseline version for the bootstrap case (first release, no annotated tags).
+# Baseline version when no semver tag matches tag-prefix.
 initial-version: "0.0.0"
 
 lint:
@@ -271,7 +271,7 @@ only accepts the listed types. Takes precedence over `extra-types`.
 
 #### `initial-version` (string, default: `"0.0.0"`)
 
-Baseline version for the bootstrap case (first release when no annotated tags exist).
+Baseline version for the bootstrap case (first release when no matching semver tags exist).
 The detected bump is applied on top of this value.
 
 | initial-version | first fix → | first feat → | first breaking → |
@@ -310,4 +310,5 @@ The next version is calculated from the highest-impact commit type in the range:
 | `fix`, `perf`, `refactor` | patch |
 | `docs`, `style`, `test`, `build`, `ci`, `chore` | none (no release) |
 
-Bootstrap (no previous annotated tag): first release is always `v0.0.1`.
+Without a matching tag, semrel applies the detected bump to
+[`initial-version`](#initial-version-string-default-000). No bump means no release.

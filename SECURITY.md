@@ -47,10 +47,14 @@ unless anonymity is requested.
 ## Supply-chain attestations
 
 Container images are signed with [cosign keyless](https://docs.sigstore.dev/cosign/signing/overview/)
-on every release. Verify an image signature:
+on every release, by the `release.yml` workflow on `main`. `action.yml` in each
+release commit references the image by digest and verifies the signature on
+every run. Verify an image signature by hand (take the reference from
+`action.yml` at the commit you pinned):
 
 ```bash
-cosign verify ghcr.io/nrkno/github-action-semantic-release:<tag> \
-  --certificate-identity-regexp="https://github.com/nrkno/github-action-semantic-release/.*" \
+IMAGE=$(grep -o 'ghcr.io/[^"]*@sha256:[0-9a-f]\{64\}' action.yml | head -1)
+cosign verify "$IMAGE" \
+  --certificate-identity="https://github.com/nrkno/github-action-semantic-release/.github/workflows/release.yml@refs/heads/main" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	gogithub "github.com/google/go-github/v60/github"
+	gogithub "github.com/google/go-github/v93/github"
 	"golang.org/x/oauth2"
 )
 
@@ -54,12 +54,12 @@ type CreateReleaseOptions struct {
 // baseURL is the value of GITHUB_API_URL (may be empty or without trailing slash).
 // For the default GitHub.com API URL, the standard client is returned.
 // For any other non-empty URL (GHES), WithEnterpriseURLs is used.
-// A trailing slash is added automatically — go-github v60 requires it.
+// A trailing slash is added automatically — go-github requires it.
 func NewClient(token, baseURL string) (*Client, error) {
 	httpClient := oauth2.NewClient(context.Background(),
 		oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
 
-	var ghClient *gogithub.Client
+	opts := []gogithub.ClientOptionsFunc{gogithub.WithHTTPClient(httpClient)}
 
 	if baseURL != "" {
 		if !strings.HasSuffix(baseURL, "/") {
@@ -67,15 +67,12 @@ func NewClient(token, baseURL string) (*Client, error) {
 		}
 		const ghDefault = "https://api.github.com/"
 		if baseURL != ghDefault {
-			var err error
-			ghClient, err = gogithub.NewClient(httpClient).WithEnterpriseURLs(baseURL, baseURL)
-			if err != nil {
-				return nil, fmt.Errorf("invalid enterprise GitHub URL %q: %w", baseURL, err)
-			}
+			opts = append(opts, gogithub.WithEnterpriseURLs(baseURL, baseURL))
 		}
 	}
-	if ghClient == nil {
-		ghClient = gogithub.NewClient(httpClient)
+	ghClient, err := gogithub.NewClient(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("invalid enterprise GitHub URL %q: %w", baseURL, err)
 	}
 	return &Client{client: ghClient}, nil
 }
@@ -85,7 +82,7 @@ func NewClient(token, baseURL string) (*Client, error) {
 func (c *Client) GetReleaseByTag(ctx context.Context, owner, repo, tag string) (*Release, error) {
 	rel, resp, err := c.client.Repositories.GetReleaseByTag(ctx, owner, repo, tag)
 	if err != nil {
-		return nil, mapHTTPError(resp.Response, err)
+		return nil, mapHTTPError(rawResponse(resp), err)
 	}
 
 	return &Release{
@@ -100,10 +97,10 @@ func (c *Client) GetReleaseByTag(ctx context.Context, owner, repo, tag string) (
 // On HTTP 422 with errors[].code == "already_exists", calls GetReleaseByTag and returns that result.
 // Returns (Release, nil) on success, typed errors on other failures.
 func (c *Client) CreateRelease(ctx context.Context, owner, repo string, opts CreateReleaseOptions) (*Release, error) {
-	input := &gogithub.RepositoryRelease{
-		TagName: gogithub.String(opts.TagName),
-		Name:    gogithub.String(opts.Name),
-		Body:    gogithub.String(opts.Body),
+	input := gogithub.CreateReleaseRequest{
+		TagName: opts.TagName,
+		Name:    &opts.Name,
+		Body:    &opts.Body,
 	}
 
 	rel, resp, err := c.client.Repositories.CreateRelease(ctx, owner, repo, input)
@@ -115,7 +112,7 @@ func (c *Client) CreateRelease(ctx context.Context, owner, repo string, opts Cre
 				return c.GetReleaseByTag(ctx, owner, repo, opts.TagName)
 			}
 		}
-		return nil, mapHTTPError(resp.Response, err)
+		return nil, mapHTTPError(rawResponse(resp), err)
 	}
 
 	return &Release{
@@ -136,7 +133,7 @@ func (c *Client) ListPRsForCommit(ctx context.Context, owner, repo, sha string) 
 	for {
 		prs, resp, err := c.client.PullRequests.ListPullRequestsWithCommit(ctx, owner, repo, sha, opts)
 		if err != nil {
-			return nil, mapHTTPError(resp.Response, err)
+			return nil, mapHTTPError(rawResponse(resp), err)
 		}
 
 		for _, pr := range prs {
@@ -168,7 +165,7 @@ func (c *Client) SearchPRsForCommit(ctx context.Context, query string) ([]PR, er
 	for {
 		searchResult, resp, err := c.client.Search.Issues(ctx, query, opts)
 		if err != nil {
-			return nil, mapHTTPError(resp.Response, err)
+			return nil, mapHTTPError(rawResponse(resp), err)
 		}
 
 		for _, issue := range searchResult.Issues {
@@ -191,11 +188,11 @@ func (c *Client) SearchPRsForCommit(ctx context.Context, query string) ([]PR, er
 // PostPRComment posts a comment on a pull request.
 // Returns nil on success, typed errors on failure.
 func (c *Client) PostPRComment(ctx context.Context, owner, repo string, prNumber int, body string) error {
-	_, resp, err := c.client.Issues.CreateComment(ctx, owner, repo, prNumber, &gogithub.IssueComment{
-		Body: gogithub.String(body),
+	_, resp, err := c.client.Issues.CreateComment(ctx, owner, repo, prNumber, gogithub.IssueCommentRequest{
+		Body: body,
 	})
 	if err != nil {
-		return mapHTTPError(resp.Response, err)
+		return mapHTTPError(rawResponse(resp), err)
 	}
 	return nil
 }
@@ -211,7 +208,7 @@ func (c *Client) FindPRComment(ctx context.Context, owner, repo string, prNumber
 	for {
 		comments, resp, err := c.client.Issues.ListComments(ctx, owner, repo, prNumber, opts)
 		if err != nil {
-			return false, mapHTTPError(resp.Response, err)
+			return false, mapHTTPError(rawResponse(resp), err)
 		}
 
 		for _, comment := range comments {
@@ -332,4 +329,13 @@ func isAlreadyExists(resp *http.Response) bool {
 	}
 
 	return false
+}
+
+// rawResponse returns the underlying *http.Response, or nil when the request
+// failed before a response arrived (go-github then returns a nil *Response).
+func rawResponse(resp *gogithub.Response) *http.Response {
+	if resp == nil {
+		return nil
+	}
+	return resp.Response
 }

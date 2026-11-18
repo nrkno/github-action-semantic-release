@@ -255,9 +255,11 @@ func (r *Repository) FindPreviousAnnotatedTag(current *Tag) (*Tag, error) {
 	return annotatedTags[currentIdx+1], nil
 }
 
-// ListCommitsSinceTag lists all commits from HEAD back to (but not including) the tag's target commit.
+// ListCommitsSinceTag lists the commits reachable from HEAD and not reachable from the tag's
+// target commit (newest first). The tag need not be an ancestor of HEAD: an off-branch release
+// commit excludes the history it was built on, and only the commits since that shared history
+// are returned. A tag with unrelated history excludes nothing.
 // If tag is nil, returns all commits from HEAD (bootstrap case).
-// Returns commits in reverse-chronological order (newest first).
 func (r *Repository) ListCommitsSinceTag(tag *Tag) ([]Commit, error) {
 	head, err := r.raw.Head()
 	if err != nil {
@@ -273,19 +275,9 @@ func (r *Repository) ListCommitsSinceTag(tag *Tag) ([]Commit, error) {
 		if tagObject.Type() != plumbing.CommitObject {
 			return nil, fmt.Errorf("tag target %s is not a commit", tagHash)
 		}
-		// Preserve existing off-branch behavior: an unreachable selected tag falls
-		// back to all HEAD history rather than changing release eligibility.
-		ancestors, err := r.ancestorSet(tagHash)
+		excluded, err = r.ancestorSet(tagHash)
 		if err != nil {
 			return nil, fmt.Errorf("failed to collect tag ancestry: %w", err)
-		}
-		// Determine reachability from tag side: HEAD belongs to set iff tag is its ancestor.
-		headAncestors, err := r.ancestorSet(head.Hash())
-		if err != nil {
-			return nil, fmt.Errorf("failed to collect HEAD ancestry: %w", err)
-		}
-		if _, reachable := headAncestors[tagHash]; reachable {
-			excluded = ancestors
 		}
 	}
 	return r.commitsFromHead(head.Hash(), excluded)
@@ -419,16 +411,18 @@ func (r *Repository) ancestorSet(start plumbing.Hash) (map[plumbing.Hash]bool, e
 	return seen, nil
 }
 
-func (r *Repository) commitsFromHead(head plumbing.Hash, excluded map[plumbing.Hash]bool) ([]Commit, error) {
+// commitsFromHead returns the commits reachable from start and not reachable from any hash in
+// excluded, newest first by committer time. The name is historical: start is any commit.
+func (r *Repository) commitsFromHead(start plumbing.Hash, excluded map[plumbing.Hash]bool) ([]Commit, error) {
 	if excluded == nil {
 		excluded = make(map[plumbing.Hash]bool)
 	}
-	if excluded[head] {
+	if excluded[start] {
 		return []Commit{}, nil
 	}
-	commit, err := r.raw.CommitObject(head)
+	commit, err := r.raw.CommitObject(start)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read HEAD commit: %w", err)
+		return nil, fmt.Errorf("failed to read start commit: %w", err)
 	}
 	iter := object.NewCommitIterCTime(commit, nil, hashesFromSet(excluded))
 	var commits []Commit
@@ -517,48 +511,21 @@ func (r *Repository) ListCommitsSinceRef(refName string) ([]Commit, error) {
 	return r.commitsFromHead(head.Hash(), excluded)
 }
 
-// ListCommitsBetweenTags lists commits between two tags (exclusive of from, inclusive of to).
-// If from is nil, returns all commits from to back to the repository root (bootstrap case).
-// Returns commits in reverse-chronological order.
+// ListCommitsBetweenTags lists the commits reachable from the `to` tag's target and not
+// reachable from the `from` tag's target (inclusive of to, exclusive of from and its ancestry).
+// If from is nil, returns all commits reachable from to (bootstrap case).
+// Returns commits in reverse-chronological order (by committer time).
 func (r *Repository) ListCommitsBetweenTags(from, to *Tag) ([]Commit, error) {
 	toHash := plumbing.NewHash(to.TargetSHA())
-
-	iter, err := r.raw.Log(&gogit.LogOptions{
-		From:  toHash,
-		Order: gogit.LogOrderCommitterTime,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create log iterator: %w", err)
-	}
-	defer iter.Close()
-
-	var commits []Commit
-	var fromHash plumbing.Hash
+	var excluded map[plumbing.Hash]bool
 	if from != nil {
-		fromHash = plumbing.NewHash(from.TargetSHA())
-	}
-
-	err = iter.ForEach(func(c *object.Commit) error {
-		// Stop when we reach the from commit (exclusive); skip if from is nil (walk all)
-		if from != nil && c.Hash == fromHash {
-			return storer.ErrStop
+		var err error
+		excluded, err = r.ancestorSet(plumbing.NewHash(from.TargetSHA()))
+		if err != nil {
+			return nil, fmt.Errorf("failed to collect ancestry of from tag: %w", err)
 		}
-
-		commit := Commit{
-			SHA:      c.Hash.String(),
-			ShortSHA: c.Hash.String()[:7],
-			Author:   c.Author.Name,
-			Date:     c.Author.When,
-			Message:  c.Message,
-		}
-		commits = append(commits, commit)
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to iterate commits: %w", err)
 	}
-
-	return commits, nil
+	return r.commitsFromHead(toHash, excluded)
 }
 
 // FindTagByName looks up a tag by name.

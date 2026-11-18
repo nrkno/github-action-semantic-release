@@ -6,46 +6,49 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.26'
       - run: go vet ./...
       - run: go test ./... -count=1 -race -coverprofile=coverage.out
       - run: go test ./... -count=1 -tags=integration
-      - uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      - uses: codecov/codecov-action@v7.1.1
         with:
           files: ./coverage.out
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.26'
-      - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
+      - uses: golangci/golangci-lint-action@v9.3.0
         with:
+          # renovate: datasource=github-releases depName=golangci/golangci-lint
           version: v2.12.2
           args: --timeout=5m
 
   lint-commits:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.26'
       - run: go build -o semrel ./cmd/semrel
@@ -54,9 +57,31 @@ jobs:
   govulncheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.26'
-      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      # renovate: datasource=go depName=golang.org/x/vuln
+      - run: go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
       - run: govulncheck ./...
+
+  docker:
+    # Build both release platforms, then smoke-test the launcher with the local amd64 image.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+      - name: Load the local smoke-test image
+        run: docker buildx build --load --platform linux/amd64 --tag semrel-smoke .
+      # Calls run-container.sh directly; does not exercise the composite action or signature verification.
+      - name: Smoke-test the container launcher
+        run: bash .github/tests/container-smoke.sh semrel-smoke
