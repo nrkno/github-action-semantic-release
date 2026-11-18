@@ -3,7 +3,7 @@ type: Configuration
 title: semrel configuration reference
 description: All environment variables consumed by semrel, subcommand flags, and GITHUB_OUTPUT fields written on a successful release.
 tags: [configuration, environment-variables, flags, github-output]
-timestamp: 2026-08-12
+timestamp: 2026-11-18
 ---
 
 # Configuration
@@ -271,7 +271,7 @@ only accepts the listed types. Takes precedence over `extra-types`.
 
 #### `initial-version` (string, default: `"0.0.0"`)
 
-Baseline version for the bootstrap case (first release when no annotated tags exist).
+Baseline version for the bootstrap case (first release when no matching semver tags exist).
 The detected bump is applied on top of this value.
 
 | initial-version | first fix → | first feat → | first breaking → |
@@ -310,4 +310,5 @@ The next version is calculated from the highest-impact commit type in the range:
 | `fix`, `perf`, `refactor` | patch |
 | `docs`, `style`, `test`, `build`, `ci`, `chore` | none (no release) |
 
-Bootstrap (no previous annotated tag): first release is always `v0.0.1`.
+Without a matching tag, semrel applies the detected bump to
+[`initial-version`](#initial-version-string-default-000). No bump means no release.

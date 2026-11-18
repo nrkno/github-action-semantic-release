@@ -23,24 +23,17 @@ force-push a tag to a malicious commit. Pinning by commit SHA gives you an
 immutable reference that cannot be silently changed.
 
 ```yaml
-# ✅ Secure — commit SHA is immutable
 - uses: nrkno/github-action-semantic-release@<COMMIT_SHA>
-  with:
-    subcommand: release
-    token: ${{ secrets.GITHUB_TOKEN }}
-
-# ⚠️ Less secure — git tags can be force-pushed
-- uses: nrkno/github-action-semantic-release@v1.2.3
   with:
     subcommand: release
     token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Every release commit contains the image digest in `action.yml`, so pinning a
-commit SHA pins the exact container image that runs. The action verifies the
-image's cosign keyless signature on every run and accepts only a signature made
-by this repository's `release.yml` workflow on `main`. To verify by hand, read
-the digest from `action.yml` at the commit you pinned:
+Starting with the digest-pinned release, the tagged commit contains the image
+digest in `action.yml`, so pinning that commit SHA pins the exact container image
+that runs. The action verifies the image's cosign keyless signature on every run
+and accepts only a signature made by this repository's `release.yml` workflow on
+`main`. To verify by hand, read the digest from `action.yml` at the commit you pinned:
 
 ```bash
 IMAGE=$(grep -o 'ghcr.io/[^"]*@sha256:[0-9a-f]\{64\}' action.yml | head -1)
@@ -49,17 +42,17 @@ cosign verify "$IMAGE" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
-Always pin consuming workflows to a specific release tag or commit SHA
-rather than `@main`.
-
-Each release prints its commit SHA in the workflow summary. You can also find
-it on the [releases page](https://github.com/nrkno/github-action-semantic-release/releases).
+Use the commit SHA printed in the release workflow summary or the commit
+pointed to by the tag on the [releases page](https://github.com/nrkno/github-action-semantic-release/releases).
+Do not use `@main`, a PR SHA, or the `main` commit from the image label: those
+refs carry an unset digest and the action will stop.
 
 ---
 
 ## Quick start
 
-The minimal release workflow — drop this in `.github/workflows/release.yml`:
+For a repository that consumes semrel, use a published action. Replace
+`<COMMIT_SHA>` with its released commit SHA:
 
 ```yaml
 on:
@@ -68,22 +61,20 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
         with:
-          fetch-depth: 0        # ⚠️  required — see warning below
-      - uses: actions/setup-go@v4
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: nrkno/github-action-semantic-release@<COMMIT_SHA>
         with:
-          go-version: '1.26'
-      - run: go build -o semrel github.com/nrkno/github-action-semantic-release/cmd/semrel
-      - id: semrel
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./semrel release
+          subcommand: release
 ```
 
 > **⚠️ `fetch-depth: 0` is required.**
@@ -93,99 +84,33 @@ jobs:
 
 ---
 
-## Full workflow
+## Runtime migration
 
-The complete three-job workflow used by this repo itself:
+- Use a Linux `amd64` or `arm64` runner with Bash, Docker and access to GHCR
+  and Sigstore. On self-hosted runners, run the runner service as a non-root
+  user that can use Docker. Docker must be able to bind-mount the runner's local paths.
+- The container now runs with the runner's UID and GID. The checkout and step
+  output must be writable by that user. The container sees the workspace, its
+  own `$GITHUB_OUTPUT` and a read-only event payload. It does not see the rest of
+  `$RUNNER_TEMP`. Put files semrel needs in the workspace. The container's `/tmp`
+  is writable, temporary storage.
+- The `token` input still defaults to `github.token`. semrel uses it directly
+  for GitHub API calls and for pushing tags over HTTPS; checkout does not need
+  to persist its credentials.
 
-```yaml
-name: Release
+## Releasing this action
 
-on:
-  push:
-    branches: [main]
+The [release workflow](.github/workflows/release.yml) builds semrel from source
+to plan and publish the release. It does not call an older action and does not
+need a published image to bootstrap. When the plan detects a releasable bump,
+the workflow pushes and signs the image, then tags a child commit containing
+that exact image digest. That child is intentionally not on `main`.
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
-
-concurrency:
-  group: release
-  cancel-in-progress: false
-
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    outputs:
-      version:  ${{ steps.semrel.outputs.version }}
-      tag:      ${{ steps.semrel.outputs.tag }}
-      released: ${{ steps.semrel.outputs.released }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.26'
-      - run: go build -o semrel ./cmd/semrel
-      - id: semrel
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./semrel release
-      - run: ./semrel notes >> $GITHUB_STEP_SUMMARY
-        if: steps.semrel.outputs.released == 'true'
-
-  publish-image:
-    needs: release
-    if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v2
-      - uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v4
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository }}:${{ needs.release.outputs.tag }}
-          build-args: |
-            VERSION=${{ needs.release.outputs.version }}
-            COMMIT=${{ github.sha }}
-            DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-      - uses: sigstore/cosign-installer@v3
-      - run: cosign sign --yes ghcr.io/${{ github.repository }}:${{ needs.release.outputs.tag }}
-        env:
-          COSIGN_EXPERIMENTAL: 1
-
-  notify:
-    needs: [release, publish-image]
-    if: needs.release.outputs.released == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
-        with:
-          go-version: '1.26'
-      - run: go build -o semrel ./cmd/semrel
-      - env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SEMREL_RELEASED: ${{ needs.release.outputs.released }}
-          SEMREL_VERSION: ${{ needs.release.outputs.version }}
-          SEMREL_TAG:     ${{ needs.release.outputs.tag }}
-        run: ./semrel notify
-```
-
-### Required permissions
-
-| Permission      | Reason                                     |
-| --------------- | ------------------------------------------ |
-| `contents: write` | Create tags and GitHub Releases          |
-| `packages: write` | Push container image to GHCR             |
-| `id-token: write` | Cosign keyless signing (OIDC token)      |
+For the transition from `v0.14.5`, wait for that workflow to publish the first
+digest-pinned release. Then verify its signed image and update the consumer
+pins and lockfiles, including this repository's notifier. Do not substitute a
+pre-release branch or commit for the released pin. See the
+[maintainer runbook](docs/playbook.md#bootstrap-the-digest-pinned-action).
 
 ---
 
@@ -202,6 +127,8 @@ jobs:
 
 ## Inputs & Outputs
 
+<!-- The generated examples below do not select a published digest-pinned
+release. Use the hand-written Quick start for a release workflow. -->
 <!-- autodoc start -->
 ## semrel
 Conventional-commit linter, semantic versioner, GitHub Release creator, PR notifier, and release notes generator — in one self-owned Go binary.

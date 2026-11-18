@@ -3,10 +3,14 @@ type: Log
 title: semrel documentation log
 description: Dated change log for the semrel docs/ directory, recording every document creation and significant update.
 tags: [log, changelog, documentation]
-timestamp: 2026-11-13
+timestamp: 2026-11-18
 ---
 
 # Documentation log
+
+## 2026-11-18
+
+- **Update** `docs/playbook.md`, `docs/configuration.md`, and `README.md`: separate consumer setup from the action's first digest-pinned release, document the hardened runner requirements and pin handoff, and clarify the first-version calculation and notification trigger.
 
 ## 2026-11-13
 

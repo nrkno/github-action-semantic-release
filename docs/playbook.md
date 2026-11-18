@@ -3,7 +3,7 @@ type: Playbook
 title: semrel playbook
 description: Step-by-step runbooks for common semrel operations — first release, debugging failures, handling conflicts, bootstrapping, and skipping a release.
 tags: [playbook, runbook, first-release, debugging, bootstrap, troubleshooting]
-timestamp: 2026-11-13
+timestamp: 2026-11-18
 ---
 
 # Playbook
@@ -15,22 +15,16 @@ future releases.
 
 **Steps:**
 
-1. **Add the release workflow.** Copy the full workflow from the [README](/README.md)
-   to `.github/workflows/release.yml`. Ensure `fetch-depth: 0` is set on the checkout step.
+1. **Add the release workflow.** Use the [quick start](/README.md#quick-start)
+   with a published action commit. Fetch full history and tags on checkout.
 
-2. **Add the CI workflow.** Copy `.github/workflows/ci.yml` to lint commits on every PR.
-
-3. **Add the notify workflow.** Copy `.github/workflows/notify.yml` to
-   `.github/workflows/notify.yml`. This workflow is triggered by
-   `on: release: types: [published]` — a separate workflow, not a job inside
-   `release.yml`. It requires `fetch-depth: 0` and `fetch-tags: true` on the
-   checkout step so that `semrel notify` can find the previous annotated tag.
+2. **Add commit lint to CI.** Use the same published action commit with
+   `subcommand: lint` and `contents: read`.
 
 3. **Make sure all existing commits are conventional.** Run lint locally:
 
    ```bash
-   go build -o semrel ./cmd/semrel
-   ./semrel lint
+   semrel lint
    ```
 
    Fix any violations before pushing. The first release reads all commits from the
@@ -40,26 +34,38 @@ future releases.
    A `chore`-only push produces `released=false` and no tag.
 
 5. **Verify.** The release workflow run should:
-   - Exit 0 on the `./semrel release` step
+   - Exit 0 on the release step
    - Show `released=true` in step outputs
-   - Create tag `v0.0.1` (bootstrap always starts at `0.0.1`)
+   - Create the computed tag (for example, `v0.0.1` for a `fix` on the default baseline)
    - Create a GitHub Release
 
-6. **Verify notify.** The GitHub Release publication triggers `notify.yml`:
-   - Finds all commits between root and `v0.0.1`
-   - Posts `<!-- semrel-notify:v0.0.1 -->` comments on all associated PRs
+6. **If you configure notifications, verify the trigger.** A `release: published`
+   workflow does not start when the release was created with `GITHUB_TOKEN`.
+   For publication events that do trigger a notification run, `semrel notify`
+   uses the tagged history to find and comment on associated PRs.
 
 ---
 
-## How to run semrel in a new repo
+## Bootstrap the digest-pinned action
 
-1. Copy all three workflow files (`ci.yml`, `release.yml`, `notify.yml`) from this repository.
-2. The repository needs no special configuration — `GITHUB_TOKEN` is automatic.
-3. Grant the required permissions (see [README — Required permissions](/README.md)):
-   - `contents: write`
-   - `packages: write` (only if publishing a container image)
-   - `id-token: write` (only if signing with cosign)
-4. Push a conventional commit to `main`.
+This is a maintainer procedure for the action repository, not for consumer
+repositories.
+
+1. The [release workflow](../.github/workflows/release.yml) builds semrel from
+   source to plan a release on `main`. A push with no bump publishes nothing.
+2. On the first releasable push, the image job publishes and signs the
+   multi-platform image. The release job tags a child commit of `main` with
+   the image digest in `action.yml`. The workflow summary gives the SHA of
+   that child, not the source `main` SHA.
+3. Check that the published tag points to that commit and verify its image
+   signature using the [README instructions](/README.md#security). The
+   workflow also publishes BuildKit provenance and an SBOM. The runtime
+   checks the digest and signing workflow identity, not the attestation's
+   build inputs.
+4. Update the action repository's `notify.yml` and the reusable release
+   workflow's lint, release and notify references, together with their lockfiles.
+   Before the first digest-pinned release, leave the existing `v0.14.5` pins
+   in place. The all-zero digest on unreleased source is intentional.
 
 ---
 
@@ -140,19 +146,17 @@ Example:
 chore: update golangci-lint to v1.59
 ```
 
-The release workflow still runs, but `released=false` means no tag is created, no
-GitHub Release is published, and the `publish-image` job is skipped. Since no
-Release is published, the `notify.yml` workflow is not triggered either.
+The release workflow still runs, but the plan reports `bump=none`, so the
+image and release jobs are skipped. No tag or GitHub Release is created.
 
 ---
 
 ## How to bootstrap (no prior tags)
 
-When there are no annotated tags in the repository, semrel treats the entire commit
-history as the range and starts versioning from `v0.0.1`.
-
-- A `feat` or `fix` commit anywhere in history produces `v0.0.1`
-- A `BREAKING CHANGE` commit still starts at `v0.0.1` (no `v1.0.0` jump on bootstrap)
+When there are no matching semver tags, semrel scans the full history and
+applies the biggest bump to `initial-version` (default `0.0.0`). With default
+rules, a fix starts at `v0.0.1`, a feature at `v0.1.0`, and a breaking change
+at `v1.0.0`.
 
 If you want to start at a specific version (e.g., `v2.0.0`), create the tag manually
 before running semrel:
